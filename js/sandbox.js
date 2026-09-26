@@ -1,5 +1,5 @@
 // Shoreline Sandbox: one-line shoreline model with groins, breakwaters, seawalls,
-// rivers, nourishment, storms and sea-level rise. See README.md for the equations.
+// rivers, nourishment, storms, sea-level rise and shorebird nesting. See README.md.
 (() => {
 'use strict';
 // ---------- constants ----------
@@ -22,7 +22,7 @@ const START_MONTH = 8; // September
 const S = {
   t: 0, yls: new Float64Array(N), ycs: new Float64Array(N), structures: [], fills: [], sandAdded: 0,
   storm: null, storms: 0, mode: 'cycle', H0: 1, T: 8.5, th: 0, slr: 2, eta: 0, speed: 1 / 30, playing: false,
-  K1: 0.2, d50: 0.3, hstar: 8, normal: 90, turn: 0, expo: 1, place: 'generic', vol: 200000, tool: 'inspect', nextId: 1, placed: false, lastSurge: 0
+  K1: 0.2, d50: 0.3, hstar: 8, normal: 90, turn: 0, expo: 1, place: 'generic', nests: [], fledged: 0, lastMonth: -1, vol: 200000, tool: 'inspect', nextId: 1, placed: false, lastSurge: 0
 };
 const y = new Float64Array(N), Hc = new Float64Array(N), Kd = new Float64Array(N), Q = new Float64Array(N + 1);
 let W = null; // current waves (breaking info)
@@ -366,6 +366,7 @@ function draw(time) {
     if (st === 'risk') { ctx.strokeStyle = '#d95926'; ctx.lineWidth = 2; ctx.strokeRect(-wpx / 2 - 2, -hpx / 2 - 2, wpx + 4, hpx + 4); }
     ctx.restore();
   }
+  drawNests();
   // rivers (channel)
   for (const s of S.structures) if (s.type === 'river') {
     const sy = shoreAt(s.x);
@@ -430,6 +431,66 @@ function drawDraft() {
   else if (d.type === 'seawall') { ctx.strokeStyle = '#b3b8bc'; ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(px(d.x1), py(d.y)); ctx.lineTo(px(d.x2), py(d.y)); ctx.stroke(); }
   ctx.globalAlpha = 1;
 }
+// ---------- shorebird nesting ----------
+// Piping plovers and least terns (both endangered in Maine) nest on open, dry sand between the
+// wrack line and the dunes, May 1 – Aug 31 (Maine IF&W). A site needs dry beach in front of the dune.
+const CHICKS_PER_PAIR = 1.44; // Maine statewide productivity, 2025 (Maine Audubon)
+const inSeason = () => { const m = Math.floor(monthPos()); return m >= 4 && m <= 7; };
+function nestStatus(n) {
+  const w = Math.min(shoreAt(n.x - 20), shoreAt(n.x), shoreAt(n.x + 20)) - DUNE_TOE;
+  if (w < 8) return 'lost';
+  if (w < 20) return 'risk';
+  return 'ok';
+}
+function nestSeasonTick(w) {
+  const m = Math.floor(monthPos());
+  if (S.lastMonth !== m) {
+    if (m === 4) S.nests.forEach(n => { n.washed = false; });           // May: birds arrive, new nests
+    if (S.lastMonth === 7 && m === 8) {                                    // Sep: count the season's chicks
+      for (const n of S.nests) {
+        const st = nestStatus(n);
+        if (!n.washed && st !== 'lost') S.fledged += n.pairs * CHICKS_PER_PAIR * (st === 'risk' ? 0.5 : 1);
+      }
+    }
+    S.lastMonth = m;
+  }
+  // a storm during nesting season washes over nests on narrow beaches
+  if (w && w.sf > 0.4 && inSeason()) for (const n of S.nests) {
+    const wid = Math.min(shoreAt(n.x - 20), shoreAt(n.x), shoreAt(n.x + 20)) - DUNE_TOE;
+    if (wid < 25 + 30 * w.surge) n.washed = true;
+  }
+}
+function drawPlover(cx, cy, k) {
+  ctx.save(); ctx.translate(cx, cy); ctx.scale(k, k);
+  ctx.fillStyle = '#d9c6a0'; ctx.beginPath(); ctx.ellipse(0, 0, 4.2, 2.8, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.ellipse(0.4, 1.1, 3, 1.4, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = '#d9c6a0'; ctx.beginPath(); ctx.arc(3.6, -1.8, 1.9, 0, 7); ctx.fill();
+  ctx.strokeStyle = '#1d1d1d'; ctx.lineWidth = 0.9; ctx.beginPath(); ctx.moveTo(2.1, -0.6); ctx.lineTo(4.8, -0.4); ctx.stroke();
+  ctx.fillStyle = '#e8892b'; ctx.beginPath(); ctx.moveTo(5.3, -2); ctx.lineTo(6.9, -1.6); ctx.lineTo(5.3, -1.3); ctx.fill();
+  ctx.fillStyle = '#1d1d1d'; ctx.beginPath(); ctx.arc(4, -2.2, 0.45, 0, 7); ctx.fill();
+  ctx.restore();
+}
+function drawNests() {
+  const season = inSeason();
+  for (const n of S.nests) {
+    const st = nestStatus(n), sh = shoreAt(n.x);
+    const y1 = DUNE_TOE + 2, y2 = Math.min(DUNE_TOE + 24, sh - 1);
+    const x1 = px(n.x - 30), x2 = px(n.x + 30), top = py(Math.max(y1 + 2, y2)), bot = py(y1);
+    ctx.setLineDash([3, 2]); ctx.lineWidth = 1.2;
+    ctx.strokeStyle = st === 'lost' ? 'rgba(90,90,90,0.8)' : st === 'risk' ? '#d95926' : '#2f5e3a';
+    ctx.strokeRect(x1, top, x2 - x1, bot - top); ctx.setLineDash([]);
+    ctx.fillStyle = ctx.strokeStyle; ctx.fillRect(x1 - 1, top - 1, 2, bot - top + 2); ctx.fillRect(x2 - 1, top - 1, 2, bot - top + 2);
+    const k = Math.max(1.1, Math.min(1.9, sc * 2.8));
+    if (st === 'lost') {
+      ctx.strokeStyle = '#d95926'; ctx.lineWidth = 2; const cx = (x1 + x2) / 2, cy = (top + bot) / 2;
+      ctx.beginPath(); ctx.moveTo(cx - 5, cy - 4); ctx.lineTo(cx + 5, cy + 4); ctx.moveTo(cx + 5, cy - 4); ctx.lineTo(cx - 5, cy + 4); ctx.stroke();
+    } else if (season && !n.washed) {
+      for (let i = 0; i < n.pairs; i++) drawPlover(x1 + (x2 - x1) * (i + 1) / (n.pairs + 1), (top + bot) / 2, k);
+    } else if (season && n.washed) {
+      ctx.fillStyle = '#6aa9c9'; for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.ellipse(x1 + (x2 - x1) * (i + 1) / 4, (top + bot) / 2, 1.8, 1.3, 0, 0, 7); ctx.fill(); }
+    }
+  }
+}
 function houseStatus(hx) {
   for (const s of S.structures) if (s.type === 'seawall' && hx >= s.x1 && hx <= s.x2) return 'ok';
   const sh = Math.min(shoreAt(hx - 15), shoreAt(hx), shoreAt(hx + 15));
@@ -480,7 +541,9 @@ const TOOLS = [
     svg: '<rect x="2" y="16" width="20" height="6" rx="1" fill="#e2c68c"/><path d="M5 16 Q12 5 19 16Z" fill="#d7b270" stroke="currentColor" stroke-width="1.4"/>' },
   { id: 'river', label: 'River', hint: '<b>River:</b> click the beach to add a river that delivers 40,000 m³ of new sand a year.',
     svg: '<rect x="2" y="16" width="20" height="6" rx="1" fill="#e2c68c"/><path d="M11 23 C8 18 15 15 11 9 M11 9 l-3 -5" stroke="#2f82ad" stroke-width="3.2" fill="none" stroke-linecap="round"/>' },
-  { id: 'erase', label: 'Remove', hint: '<b>Remove:</b> click a structure or river to take it away.',
+  { id: 'nest', label: 'Nesting area', hint: '<b>Nesting area:</b> click the upper beach to rope off a shorebird nesting area (piping plovers and least terns nest on open sand just in front of the dunes, May–August).',
+    svg: '<rect x="2" y="16" width="20" height="6" rx="1" fill="#e2c68c"/><path d="M4 16V9M20 16V9M4 10h16" stroke="currentColor" stroke-width="1.4" stroke-dasharray="2 1.5" fill="none"/><ellipse cx="12" cy="13" rx="4" ry="2.6" fill="#d8c7a0" stroke="currentColor" stroke-width="1"/><circle cx="15.2" cy="11" r="1.7" fill="#d8c7a0" stroke="currentColor" stroke-width="1"/><path d="M13.6 12.3h3" stroke="#1b1b1b" stroke-width="1.2"/>' },
+  { id: 'erase', label: 'Remove', hint: '<b>Remove:</b> click a structure, river or nesting area to take it away.',
     svg: '<path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>' }
 ];
 const toolbar = document.getElementById('toolbar'), toolHint = document.getElementById('toolHint');
@@ -554,6 +617,9 @@ function eraseAt(p) {
     else if (s.type === 'river') d = seg(s.x, 0, s.x, shoreAt(s.x));
     if (d < bd) { bd = d; best = s; }
   }
+  let bestNest = null;
+  for (const n of S.nests) { const d = seg(n.x - 30, DUNE_TOE + 12, n.x + 30, DUNE_TOE + 12); if (d < bd) { bd = d; bestNest = n; } }
+  if (bestNest) { S.nests = S.nests.filter(n => n !== bestNest); return; }
   if (best) { S.structures = S.structures.filter(s => s !== best); refreshTerms(); }
 }
 cv.addEventListener('pointerdown', e => {
@@ -562,6 +628,7 @@ cv.addEventListener('pointerdown', e => {
   if (S.tool === 'erase') { eraseAt(p); return; }
   if (S.tool === 'nourish') { nourish(snapX(p.X)); return; }
   if (S.tool === 'river') { addStructure({ type: 'river', x: snapX(p.X), q: 40000 }); return; }
+  if (S.tool === 'nest') { S.nests.push({ x: snapX(p.X), pairs: 2, washed: false }); placed(); return; }
   draft = makeDraft(S.tool, p);
   if (draft) cv.setPointerCapture(e.pointerId);
 });
@@ -577,8 +644,10 @@ const tip = document.getElementById('tip');
 function showTip(e, p) {
   const r = stage.getBoundingClientRect();
   const sh = shoreAt(p.X), q = faceQ(p.X), width = sh - DUNE_TOE, i = clamp(Math.floor(p.X / DX), 0, N - 1);
-  tip.innerHTML = `<span class="mono">x = ${Math.round(p.X)} m</span><br>Dry beach ${Math.max(0, width).toFixed(0)} m wide (${(sh - Y0 >= 0 ? '+' : '−') + Math.abs(sh - Y0).toFixed(1)} m)<br>Drift ${fmtQ(q)}<br>Breaking waves ${(Hc[i] || 0).toFixed(2)} m`;
-  tip.style.left = Math.min(e.clientX - r.left, r.width - 190) + 'px'; tip.style.top = Math.min(e.clientY - r.top, r.height - 90) + 'px';
+  const nest = S.nests.find(n => Math.abs(n.x - p.X) < 32 && p.Y < DUNE_TOE + 40 && p.Y > DUNE_TOE - 10);
+  const nestTxt = nest ? `<br><b>Shorebird nesting area</b>: ${nest.pairs} plover pair${nest.pairs > 1 ? 's' : ''}, ${{ ok: 'safe', risk: 'at risk (narrow beach)', lost: 'lost (no dry beach)' }[nestStatus(nest)]}${nest.washed && inSeason() ? ', washed out this season' : ''}` : '';
+  tip.innerHTML = `<span class="mono">x = ${Math.round(p.X)} m</span><br>Dry beach ${Math.max(0, width).toFixed(0)} m wide (${(sh - Y0 >= 0 ? '+' : '−') + Math.abs(sh - Y0).toFixed(1)} m)<br>Drift ${fmtQ(q)}<br>Breaking waves ${(Hc[i] || 0).toFixed(2)} m${nestTxt}`;
+  tip.style.left = Math.min(e.clientX - r.left, r.width - 280) + 'px'; tip.style.top = Math.min(e.clientY - r.top, r.height - 130) + 'px';
   tip.hidden = false;
 }
 
@@ -711,16 +780,16 @@ function runExperiment(k) {
 // the offshore waves by headlands and the bay; expo = offshore wave-height factor).
 const FT = 0.3048;
 const PLACES = {
-  generic: { name: 'Generic beach', normal: 90, turn: 0, expo: 1, d50: 0.3, hstar: 8, K1: 0.2, build: () => {},
+  generic: { nests: [[230, 2], [570, 1], [930, 2], [1270, 1]], name: 'Generic beach', normal: 90, turn: 0, expo: 1, d50: 0.3, hstar: 8, K1: 0.2, build: () => {},
     blurb: 'A straight, open beach with nothing built on it yet. A blank sandbox.' },
-  campEllis: { name: 'Camp Ellis', normal: 73, turn: 10, expo: 0.55, d50: 0.2, hstar: 7, K1: 0.2,
+  campEllis: { nests: [[140, 1], [380, 1]], name: 'Camp Ellis', normal: 73, turn: 10, expo: 0.55, d50: 0.2, hstar: 7, K1: 0.2,
     build: () => {
       addStructure({ type: 'jetty', x: 1300, tip: YL - 25 });
       addStructure({ type: 'seawall', x1: 980, x2: 1290, y: DUNE_TOE + 2 });
       addStructure({ type: 'river', x: 1440, q: 40000 });
     },
-    blurb: 'Saco, at the south end of Saco Bay. The Saco River\'s north jetty (built from the 1860s on) sits at the SSE end. Sand drifts north along the bay, so the beach beside the jetty gets no new supply and has eroded for over a century; riprap now fronts many homes. The river\'s sand is carried out past the jetty instead of feeding the beach. Waves are gentle most of the time (UNE buoy: mean 0.4 m) but storms come from the E–ENE.' },
-  campEllisSpur: { name: 'Camp Ellis + spur jetty', normal: 73, turn: 10, expo: 0.55, d50: 0.2, hstar: 7, K1: 0.2,
+    blurb: 'Saco, at the south end of Saco Bay. The Saco River\'s north jetty (built from the 1860s on) sits at the SSE end. Sand drifts north along the bay, so the beach beside the jetty gets no new supply and has eroded for over a century; riprap now fronts many homes. The river\'s sand is carried out past the jetty instead of feeding the beach. Waves are gentle most of the time (UNE buoy: mean 0.4 m) but storms come from the E–ENE. Plovers nest toward Ferry Beach; the Camp Ellis–Pine Point stretch had 13 pairs in 2025 but fledged only 3 chicks.' },
+  campEllisSpur: { nests: [[140, 1], [380, 1]], name: 'Camp Ellis + spur jetty', normal: 73, turn: 10, expo: 0.55, d50: 0.2, hstar: 7, K1: 0.2,
     build: () => {
       addStructure({ type: 'jetty', x: 1300, tip: YL - 25 });
       addStructure({ type: 'breakwater', x1: 1300 - 750 * FT, x2: 1296, y: Y0 + 150 });
@@ -729,30 +798,30 @@ const PLACES = {
     },
     fill: { x: 1150, V: 56000 },
     blurb: 'Camp Ellis with the Army Corps\' 750-ft (230 m) spur jetty, built off the north jetty and running parallel to shore (construction began in 2026, due to finish in August 2027). It shelters the beach behind it. The first nourishment (about 73,000 yd³, 56,000 m³) is planned for 2028 and is already placed here.' },
-  oob: { name: 'Old Orchard Beach', normal: 110, turn: 35, expo: 0.65, d50: 0.2, hstar: 7, K1: 0.2,
+  oob: { nests: [[240, 1], [1250, 1]], name: 'Old Orchard Beach', normal: 110, turn: 35, expo: 0.65, d50: 0.2, hstar: 7, K1: 0.2,
     build: () => { addStructure({ type: 'seawall', x1: 520, x2: 1050, y: DUNE_TOE + 2 }); },
     blurb: 'The middle of Saco Bay: a wide, flat, fine-sand beach. Seawalls and riprap back its most built-up stretch. The Pier stands on open piles, so sand passes under it and it is not modelled. Net drift in Saco Bay is toward the north.' },
-  pinePoint: { name: 'Pine Point', normal: 110, turn: 40, expo: 0.6, d50: 0.2, hstar: 7, K1: 0.2,
+  pinePoint: { nests: [[420, 2], [700, 2], [1020, 1]], name: 'Pine Point', normal: 110, turn: 40, expo: 0.6, d50: 0.2, hstar: 7, K1: 0.2,
     build: () => { addStructure({ type: 'jetty', x: 200, tip: Y0 + 300 }); addStructure({ type: 'river', x: 90, q: 10000 }); },
     blurb: 'Scarborough, at the north end of Saco Bay, beside the Scarborough River jetty. Sand drifting north along the bay piles up against the jetty.' },
-  wells: { name: 'Wells Beach', normal: 115, turn: 35, expo: 0.9, d50: 0.25, hstar: 8, K1: 0.2,
+  wells: { nests: [[110, 3], [190, 3], [520, 2]], name: 'Wells Beach', normal: 115, turn: 35, expo: 0.9, d50: 0.25, hstar: 8, K1: 0.2,
     build: () => {
       addStructure({ type: 'jetty', x: 300, tip: Y0 + 260 });
       addStructure({ type: 'jetty', x: 430, tip: Y0 + 250 });
       addStructure({ type: 'seawall', x1: 600, x2: 1420, y: DUNE_TOE + 2 });
     },
-    blurb: 'Wells Harbor\'s twin rubble jetties (1960s, extended in 1965 to about 1,225 and 1,300 ft, 425 ft apart) guard the Webhannet River inlet at the NNE end, with Drakes Island beyond them. A seawall backs much of the developed Wells Beach to the south.' },
-  kennebunk: { name: 'Kennebunk Beach', normal: 165, turn: 30, expo: 0.6, d50: 0.25, hstar: 7, K1: 0.2,
+    blurb: 'Wells Harbor\'s twin rubble jetties (1960s, extended in 1965 to about 1,225 and 1,300 ft, 425 ft apart) guard the Webhannet River inlet at the NNE end, with Drakes Island beyond them. A seawall backs much of the developed Wells Beach to the south. The unarmored sand near the jetties is Maine\'s busiest plover beach: 23 pairs fledged 45 chicks in 2025.' },
+  kennebunk: { nests: [], name: 'Kennebunk Beach', normal: 165, turn: 30, expo: 0.6, d50: 0.25, hstar: 7, K1: 0.2,
     build: () => {
       addStructure({ type: 'seawall', x1: 180, x2: 1300, y: DUNE_TOE + 2 });
       addStructure({ type: 'jetty', x: 1380, tip: Y0 + 250 });
       addStructure({ type: 'river', x: 1450, q: 5000 });
     },
-    blurb: 'Gooch\'s, Middle and Mother\'s beaches along Beach Avenue face south, with a long seawall behind them and the Kennebunk River jetties at the WSW end.' },
-  ogunquit: { name: 'Ogunquit Beach', normal: 100, turn: 0, expo: 0.9, d50: 0.25, hstar: 8, K1: 0.2,
+    blurb: 'Gooch\'s, Middle and Mother\'s beaches along Beach Avenue face south, with a long seawall behind them and the Kennebunk River jetties at the WSW end. With the seawall and no dry upper beach, there is no nesting habitat here.' },
+  ogunquit: { nests: [[280, 3], [600, 3], [920, 3], [1230, 3]], name: 'Ogunquit Beach', normal: 100, turn: 0, expo: 0.9, d50: 0.25, hstar: 8, K1: 0.2,
     build: () => { addStructure({ type: 'river', x: 1440, q: 8000 }); },
-    blurb: 'A natural barrier spit with dunes and the Ogunquit River behind it, reaching the sea at the south end. With no hard structures, it is a good control to compare with the others.' },
-  popham: { name: 'Popham Beach', normal: 180, turn: 45, expo: 0.8, d50: 0.3, hstar: 8, K1: 0.2,
+    blurb: 'A natural barrier spit with dunes and the Ogunquit River behind it, reaching the sea at the south end. With no hard structures, it is a good control to compare with the others. It is one of Maine\'s main plover beaches (12+ pairs in 2025).' },
+  popham: { nests: [[620, 2], [880, 2], [1320, 2]], name: 'Popham Beach', normal: 180, turn: 45, expo: 0.8, d50: 0.3, hstar: 8, K1: 0.2,
     build: () => {
       addStructure({ type: 'river', x: 40, q: 60000 });
       addStructure({ type: 'seawall', x1: 150, x2: 380, y: DUNE_TOE + 2 });
@@ -775,6 +844,7 @@ function loadPlace(k) {
   const pl = PLACES[k]; S.place = k;
   Object.assign(S, { normal: pl.normal, turn: pl.turn, expo: pl.expo, d50: pl.d50, hstar: pl.hstar, K1: pl.K1, slr: 2 });
   S.structures = []; S.storm = null;
+  S.nests = (pl.nests || []).map(([x, pairs]) => ({ x, pairs, washed: false }));
   setMode('cycle'); resetBeach(); pl.build();
   if (pl.fill) { const keep = S.vol; S.vol = pl.fill.V; nourish(pl.fill.x); S.vol = keep; S.fx = []; }
   S.sandAdded = pl.fill ? pl.fill.V : 0;
@@ -785,7 +855,7 @@ function loadPlace(k) {
 }
 
 function resetBeach() {
-  S.t = 0; S.eta = 0; S.fills = []; S.sandAdded = 0; S.storms = 0; S.storm = null;
+  S.t = 0; S.eta = 0; S.fills = []; S.sandAdded = 0; S.storms = 0; S.storm = null; S.fledged = 0; S.lastMonth = -1; S.nests.forEach(n => { n.washed = false; });
   $('btnNoreaster').disabled = $('btnTropical').disabled = false;
   W = currentWaves();
   const yeq = -W_CS * (0.068 * W.Hb) / (BERM + 1.28 * W.Hb);
@@ -972,6 +1042,12 @@ function updateReadouts() {
   $('stHousesS').textContent = lost ? `${lost} flooded, ${risk} with under 15 m of beach` : 'beach under 15 m wide';
   $('stHouseBox').className = 'stat' + (risk + lost ? ' bad' : '');
   $('stSand').textContent = fmtVol(S.sandAdded);
+  const nn = S.nests.length; let nOk = 0, nRisk = 0, nLost = 0, nWash = 0;
+  for (const n of S.nests) { const st = nestStatus(n); if (st === 'ok') nOk++; else if (st === 'risk') nRisk++; else nLost++; if (n.washed && inSeason()) nWash++; }
+  $('stNests').textContent = nn ? `${nOk} / ${nn} safe` : 'none';
+  const chicks = Math.round(S.fledged);
+  $('stNestsS').textContent = !nn ? 'add a nesting area' : `${inSeason() ? 'Nesting now' : 'Off season'} · ${chicks} chick${chicks === 1 ? '' : 's'} fledged` + (nWash ? ` · ${nWash} washed out` : '') + (nLost ? ` · ${nLost} lost` : '');
+  $('stNestBox').className = 'stat' + (nn && (nRisk || nLost || nWash) ? ' bad' : '');
 }
 
 // ---------- main loop ----------
@@ -979,7 +1055,7 @@ let last = performance.now(), lastUI = 0, wavePhase = 0;
 function frame(now) {
   const dtReal = Math.min(0.05, (now - last) / 1000); last = now;
   wavePhase += (W ? W.om : 0.75) * dtReal * 2.2; // accumulate, so a change in period never makes the crests jump or race
-  if (S.playing) { advance(dtReal); moveParticles(dtReal); }
+  if (S.playing) { advance(dtReal); moveParticles(dtReal); nestSeasonTick(W); }
   const tSec = now / 1000;
   draw(tSec);
   if (now - lastUI > 200) { lastUI = now; updateReadouts(); updateLive(); drawChart(); }
@@ -988,6 +1064,7 @@ function frame(now) {
 
 // ---------- init ----------
 h0.value = 1; per.value = 8.5; syncSliders();
+S.nests = PLACES.generic.nests.map(([x, pairs]) => ({ x, pairs, washed: false }));
 setTool('inspect'); setMode('cycle'); setSpeed(SP_MIN); setPlaying(false);
 chips.querySelector('[data-place="generic"]').setAttribute('aria-pressed', 'true'); $('placeBlurb').innerHTML = '<b>Generic beach.</b> ' + PLACES.generic.blurb + ' Pick a Maine beach to load its structures and wave settings.';
 resize(); window.addEventListener('resize', () => { resize(); });

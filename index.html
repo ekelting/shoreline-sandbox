@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="description" content="Build groins, jetties and breakwaters on a sandy beach or a real Maine beach, choose the waves and seasons, send storms, and watch the shoreline and its equation change.">
+<meta name="description" content="Build groins, jetties and breakwaters on a sandy beach or a real Maine beach, choose the waves and seasons, send storms, protect shorebird nests, and watch the shoreline and its equation change.">
 <title>Shoreline Sandbox</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -80,6 +80,7 @@
         <div class="stat bad"><div class="k">Most erosion</div><div class="v" id="stWorst">0 m</div><div class="s" id="stWorstS">—</div></div>
         <div class="stat good"><div class="k">Most growth</div><div class="v" id="stBest">0 m</div><div class="s" id="stBestS">—</div></div>
         <div class="stat" id="stHouseBox"><div class="k">Houses at risk</div><div class="v" id="stHouses">0 / 15</div><div class="s" id="stHousesS">beach under 15 m wide</div></div>
+        <div class="stat" id="stNestBox"><div class="k">Shorebird nests</div><div class="v" id="stNests">0 / 0</div><div class="s" id="stNestsS">safe nesting areas</div></div>
         <div class="stat"><div class="k">Sand added</div><div class="v" id="stSand">0</div><div class="s">m³ from nourishment</div></div>
       </div>
 
@@ -189,6 +190,7 @@
       <h2>How the model works</h2>
       <p>This is a <b>one-line model</b>, the workhorse of shoreline engineering since Pelnard-Considère (1956). It treats the whole beach profile as one line that moves back and forth without changing shape, so the only thing that matters is how much sand flows along the shore.</p>
       <p>Waves that arrive at an angle drive a current in the surf zone that carries sand along the beach. Where that flow speeds up, the beach loses sand and retreats; where it slows down (behind a groin, in the calm lee of a breakwater) the beach builds out. A second, faster part of the model moves sand between the beach and an offshore bar as waves grow and shrink, so the beach narrows in storms and heals in calm weather. Sea-level rise shifts the whole profile landward (the Bruun rule).</p>
+      <p><b>Shorebirds.</b> Piping plovers and least terns, both endangered in Maine, nest on open, dry sand in front of the dunes from May through August. A nesting area stays safe while there is at least 20&nbsp;m of dry beach in front of the dune, is at risk below that, and is lost below 8&nbsp;m (for example in front of a seawall). A storm during nesting season washes out nests on narrow beaches. At the end of each season, safe areas fledge about 1.44 chicks per pair, Maine's statewide rate in 2025.</p>
       <p>The sim solves these equations with finite differences on 150 cells, each 10&nbsp;m long, taking hundreds of small time steps per second.</p>
     </section>
     <section>
@@ -216,6 +218,7 @@
         <li>Bruun, P. (1962). Sea-level rise as a cause of shore erosion. <i>J. Waterways and Harbors Div.</i>, ASCE 88.</li>
         <li><a href="https://www.ndbc.noaa.gov/station_page.php?station=44007" target="_blank" rel="noopener">NOAA NDBC buoy 44007, Portland</a> and the <a href="https://ekelting.github.io/UNE-Camp-Ellis-SPOT-32787C/" target="_blank" rel="noopener">UNE Camp Ellis wave buoy</a> (wave seasons and storm directions).</li>
         <li><a href="https://tidesandcurrents.noaa.gov/sltrends/sltrends_station.shtml?id=8418150" target="_blank" rel="noopener">NOAA sea level trend, Portland ME (8418150)</a>.</li>
+        <li><a href="https://maineaudubon.org/news/plovers-all-over-2025-season-recap/" target="_blank" rel="noopener">Maine Audubon (2025), plover season recap</a> and <a href="https://www.maine.gov/ifw/fish-wildlife/wildlife/endangered-threatened-species/essential-wildlife-habitat/pplt-nests.html" target="_blank" rel="noopener">Maine IF&amp;W, piping plover and least tern essential habitat</a>.</li>
         <li>Maine beach presets: <a href="https://www.maine.gov/dacf/mgs/explore/marine/virtual/saco/virtual_saco_bay.pdf" target="_blank" rel="noopener">Maine Geological Survey, Saco Bay coastal processes</a>; <a href="https://www.nae.usace.army.mil/Missions/Projects-Topics/Camp-Ellis/" target="_blank" rel="noopener">USACE Camp Ellis project</a>; <a href="https://www.pressherald.com/2026/07/09/sacos-camp-ellis-jetty-project-is-underway-heres-what-you-need-to-know/" target="_blank" rel="noopener">Press Herald (2026), Camp Ellis spur jetty</a>; <a href="https://en.wikipedia.org/wiki/Webhannet_River" target="_blank" rel="noopener">Webhannet River and Wells Harbor jetties</a>; <a href="https://digitalmaine.com/cgi/viewcontent.cgi?article=1636&amp;context=mgs_publications" target="_blank" rel="noopener">MGS (2024), Shoreline dynamics at Popham Beach</a>.</li>
       </ol>
     </section>
