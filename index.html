@@ -30,32 +30,7 @@
     </div>
   </header>
 
-  <div class="stage" id="stage" data-tool="inspect">
-        <canvas id="beach" aria-label="Top-down view of the beach, waves and structures"></canvas>
-        <div class="ov ov-clock"><span class="pill mono" id="clock">Year 0 · Sep</span><span class="pill" id="waveTag">Year-round waves</span></div>
-        <div class="ov ov-drift"><span class="pill" id="driftPill">Sand drift</span></div>
-        <div class="ov ov-storm" id="stormBanner" hidden></div>
-        <div class="ov ov-hint" id="hint">🏖️ A straight, sandy beach and nothing on it yet.<br><b>Pick a tool below the beach, click the water or the sand the water or the beach, then press Start.</b></div>
-        <div class="ov ov-tip" id="tip" hidden></div>
-        <div class="ov ov-toasts" id="toasts" aria-live="polite"></div>
-      </div>
-
-  <main class="layout">
-    <div class="stack">
-      <div>
-        <div class="toolbar" role="toolbar" aria-label="Tools" id="toolbar"></div>
-        <div class="tool-hint" id="toolHint"></div>
-      </div>
-
-      <section class="places" aria-labelledby="hPlaces">
-        <div class="places-row">
-          <h2 id="hPlaces">🗺️ Maine beaches</h2>
-          <div class="chips" id="placeChips" role="group" aria-label="Load a Maine beach"></div>
-        </div>
-        <p class="place-blurb" id="placeBlurb"></p>
-      </section>
-
-      <section class="timebar" aria-labelledby="hTime">
+  <section class="timebar" aria-labelledby="hTime">
         <div class="tb-row">
           <h2 id="hTime">⏱️ Time</h2>
           <button class="btn go" id="btnStart" type="button"><svg viewBox="0 0 14 14" aria-hidden="true"><path d="M3 1.5v11l9-5.5z" fill="currentColor"/></svg>Start model</button>
@@ -73,6 +48,40 @@
           <button class="btn" id="btnReset" type="button">🔄 Reset beach and clock</button>
         </div>
       </section>
+
+  <div class="beachrow">
+    <div class="stage" id="stage" data-tool="inspect">
+        <canvas id="beach" aria-label="Top-down view of the beach, waves and structures"></canvas>
+        <div class="ov ov-clock"><span class="pill mono" id="clock">Year 0 · Sep</span><span class="pill" id="waveTag">Year-round waves</span></div>
+        <div class="ov ov-drift"><span class="pill" id="driftPill">Sand drift</span></div>
+        <div class="ov ov-storm" id="stormBanner" hidden></div>
+        <div class="ov ov-hint" id="hint">🏖️ A straight, sandy beach and nothing on it yet.<br><b>Pick a tool on the right, click the water or the sand, then press Start.</b></div>
+        <div class="ov ov-tip" id="tip" hidden></div>
+        <div class="ov ov-toasts" id="toasts" aria-live="polite"></div>
+      </div>
+    <aside class="toolcol" aria-labelledby="hTools">
+      <h2 id="hTools">🧰 Build</h2>
+      <div class="toolbar" role="toolbar" aria-label="Tools" id="toolbar"></div>
+      <label class="tsl" for="vol">🚚 Sand fill size <output id="volo" for="vol"></output></label>
+      <input type="range" id="vol" min="50000" max="500000" step="25000">
+      <label class="tsl" for="rw">🏞️ River width <output id="rwo" for="rw"></output></label>
+      <input type="range" id="rw" min="20" max="200" step="5">
+      <button class="btn" id="btnRebuild" type="button">🔨 Rebuild all houses</button>
+      <div class="tool-hint" id="toolHint"></div>
+    </aside>
+  </div>
+
+  <main class="layout">
+    <div class="stack">
+
+      <section class="places" aria-labelledby="hPlaces">
+        <div class="places-row">
+          <h2 id="hPlaces">🗺️ Maine beaches</h2>
+          <div class="chips" id="placeChips" role="group" aria-label="Load a Maine beach"></div>
+        </div>
+        <p class="place-blurb" id="placeBlurb"></p>
+      </section>
+
 
       <div class="card">
         <div class="chart-head">
@@ -137,7 +146,6 @@
           </div>
           <div class="row"><label for="slr">Sea-level rise</label><input type="range" id="slr" min="0" max="20" step="0.5"><output id="slro" for="slr"></output></div>
           <p class="note">Portland, Maine's tide gauge has recorded roughly 2&nbsp;mm/yr since 1912. Try 10–15&nbsp;mm/yr for late-century projections.</p>
-          <div class="row"><label for="vol">Nourish size</label><input type="range" id="vol" min="50000" max="500000" step="25000"><output id="volo" for="vol"></output></div>
         </section>
 
         <section class="ctl" aria-labelledby="hExp">
