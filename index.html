@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Build groins, jetties and breakwaters on a sandy beach, choose the waves and seasons, send storms, and watch the shoreline and its equation change.">
+<title>Shoreline Sandbox</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="css/style.css">
+<script src="js/mathjax-config.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-svg-full.js" async></script>
+
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>Shoreline <span>Sandbox</span></h1>
+      <p>Build groins, jetties and breakwaters on a 1.5&nbsp;km beach, choose the waves and the season, call in a storm, and watch where the sand goes. Everything you add changes the equation on the right.</p>
+    </div>
+    <p class="frame-note">Picture the beach facing east, like Saco Bay: north is to the left, south to the right, open ocean at the top.</p>
+  </header>
+
+  <main class="layout">
+    <div class="stack">
+      <div>
+        <div class="toolbar" role="toolbar" aria-label="Tools" id="toolbar"></div>
+        <div class="tool-hint" id="toolHint"></div>
+      </div>
+
+      <div class="runbar">
+        <button class="btn go" id="btnStart" type="button"><svg viewBox="0 0 14 14" aria-hidden="true"><path d="M3 1.5v11l9-5.5z" fill="currentColor"/></svg>Start model</button>
+        <button class="btn stop" id="btnPause" type="button"><svg viewBox="0 0 14 14" aria-hidden="true"><rect x="2.5" y="1.5" width="3.2" height="11" rx="1" fill="currentColor"/><rect x="8.3" y="1.5" width="3.2" height="11" rx="1" fill="currentColor"/></svg>Pause model</button>
+        <span class="run-status" id="runStatus" role="status"></span>
+      </div>
+
+      <div class="stage" id="stage" data-tool="inspect">
+        <canvas id="beach" aria-label="Top-down view of the beach, waves and structures"></canvas>
+        <div class="ov ov-clock"><span class="pill mono" id="clock">Year 0 · Sep</span><span class="pill" id="waveTag">Year-round waves</span></div>
+        <div class="ov ov-drift"><span class="pill" id="driftPill">Sand drift</span></div>
+        <div class="ov ov-storm" id="stormBanner" hidden></div>
+        <div class="ov ov-hint" id="hint">A straight, sandy beach and nothing on it yet.<br><b>Pick a tool above and click the water or the beach, then press Start.</b></div>
+        <div class="ov ov-tip" id="tip" hidden></div>
+      </div>
+
+      <div class="card">
+        <div class="chart-head">
+          <h2>How far the shoreline has moved since the start</h2>
+          <div class="legend"><span><i style="background:var(--green)"></i>Beach grew</span><span><i style="background:var(--orange)"></i>Beach eroded</span></div>
+        </div>
+        <canvas id="chart"></canvas>
+      </div>
+
+      <div class="stats" id="stats">
+        <div class="stat"><div class="k">Time</div><div class="v" id="stTime">0.0 yr</div><div class="s" id="stTimeS">since start</div></div>
+        <div class="stat" id="stAvgBox"><div class="k">Average change</div><div class="v" id="stAvg">0.0 m</div><div class="s">whole beach</div></div>
+        <div class="stat bad"><div class="k">Most erosion</div><div class="v" id="stWorst">0 m</div><div class="s" id="stWorstS">—</div></div>
+        <div class="stat good"><div class="k">Most growth</div><div class="v" id="stBest">0 m</div><div class="s" id="stBestS">—</div></div>
+        <div class="stat" id="stHouseBox"><div class="k">Houses at risk</div><div class="v" id="stHouses">0 / 15</div><div class="s" id="stHousesS">beach under 15 m wide</div></div>
+        <div class="stat"><div class="k">Sand added</div><div class="v" id="stSand">0</div><div class="s">m³ from nourishment</div></div>
+      </div>
+
+      <div class="controls">
+        <section class="ctl" aria-labelledby="hWaves">
+          <h2 id="hWaves">Waves and seasons</h2>
+          <div class="seg" id="modeSeg" role="group" aria-label="Wave climate">
+            <button data-mode="cycle">Year-round</button>
+            <button data-mode="winter">Winter</button>
+            <button data-mode="spring">Spring</button>
+            <button data-mode="summer">Summer</button>
+            <button data-mode="fall">Fall</button>
+            <button data-mode="custom">Custom</button>
+          </div>
+          <p class="note" id="modeNote"></p>
+          <div class="dial-wrap">
+            <svg id="dial" viewBox="0 0 220 132" role="slider" tabindex="0" aria-label="Wave direction" aria-valuemin="-75" aria-valuemax="75">
+              <rect class="sea" x="0" y="0" width="220" height="114" rx="10"/>
+              <path class="arc" d="M 23.4 62 A 90 90 0 0 1 196.6 62"/>
+              <g id="dialTicks"></g>
+              <rect class="sand" x="4" y="114" width="212" height="16" rx="4"/>
+              <text class="lbl" x="8" y="108">N</text>
+              <text class="lbl" x="106" y="12">E</text>
+              <text class="lbl" x="202" y="108">S</text>
+              <g id="dialCrests"></g>
+              <line class="arrow" id="dialArrow" x1="0" y1="0" x2="0" y2="0"/>
+              <path id="dialHead" fill="var(--blue)" d=""/>
+              <circle class="knob" id="dialKnob" r="9" cx="110" cy="22"/>
+            </svg>
+            <div class="dial-read">
+              <div class="big" id="dirBig">from E</div>
+              <div class="mono" id="dirSmall">0° off straight-on</div>
+              <div class="note" style="margin-top:4px">Drag the dot to choose where waves come from.</div>
+            </div>
+          </div>
+          <div class="row"><label for="h0">Wave height</label><input type="range" id="h0" min="0.2" max="3" step="0.05"><output id="h0o" for="h0"></output></div>
+          <div class="row"><label for="per">Wave period</label><input type="range" id="per" min="4" max="15" step="0.5"><output id="pero" for="per"></output></div>
+        </section>
+
+        <section class="ctl" aria-labelledby="hWx">
+          <h2 id="hWx">Storms and sea level</h2>
+          <p class="sub">Storms raise the water (surge) and send big waves for a few days. The sim slows down so you can watch.</p>
+          <div class="btns">
+            <button class="btn storm" id="btnNoreaster">Send a nor'easter</button>
+            <button class="btn storm trop" id="btnTropical">Send a tropical storm</button>
+          </div>
+          <div class="row"><label for="slr">Sea-level rise</label><input type="range" id="slr" min="0" max="20" step="0.5"><output id="slro" for="slr"></output></div>
+          <p class="note">Portland, Maine's tide gauge has recorded roughly 2&nbsp;mm/yr since 1912. Try 10–15&nbsp;mm/yr for late-century projections.</p>
+          <div class="row"><label for="vol">Nourish size</label><input type="range" id="vol" min="50000" max="500000" step="25000"><output id="volo" for="vol"></output></div>
+        </section>
+
+        <section class="ctl" aria-labelledby="hTime">
+          <h2 id="hTime">Time</h2>
+          <div class="btns">
+            <div class="seg" id="speedSeg" role="group" aria-label="Speed" style="flex:1">
+              <button data-speed="0.1">1 yr / 10 s</button>
+              <button data-speed="0.5">1 yr / 2 s</button>
+              <button data-speed="2">2 yr / s</button>
+            </div>
+          </div>
+          <div class="btns">
+            <button class="btn" id="btnUndo">Undo last</button>
+            <button class="btn" id="btnClear">Remove all structures</button>
+            <button class="btn" id="btnReset">Reset beach and clock</button>
+          </div>
+        </section>
+
+        <section class="ctl" aria-labelledby="hExp">
+          <h2 id="hExp">Try an experiment</h2>
+          <div class="exp">
+            <button data-exp="groins"><b>Groin field in winter</b><span>Four groins, steady winter waves from the northeast. Sand piles against the north side of each one.</span></button>
+            <button data-exp="jetty"><b>River-mouth jetty</b><span>A long jetty beside a river. Sand piles up on one side and the other side starves.</span></button>
+            <button data-exp="salient"><b>Breakwater salient</b><span>Waves straight on, breakwater offshore. The beach grows a bump toward it.</span></button>
+            <button data-exp="squeeze"><b>Seawall squeeze</b><span>Fast sea-level rise against a seawall, downdrift of a groin. The dry beach disappears.</span></button>
+          </div>
+        </section>
+
+        <section class="ctl" aria-labelledby="hAdv">
+          <details class="adv">
+            <summary id="hAdv">Advanced settings</summary>
+            <div style="display:grid;gap:10px">
+              <div class="row"><label for="k1">Sand mobility K₁</label><input type="range" id="k1" min="0.05" max="0.8" step="0.01"><output id="k1o" for="k1"></output></div>
+              <div class="row"><label for="d50">Grain size</label><input type="range" id="d50" min="0.15" max="1" step="0.05"><output id="d50o" for="d50"></output></div>
+              <div class="row"><label for="hs">Closure depth h*</label><input type="range" id="hs" min="4" max="14" step="0.5"><output id="hso" for="hs"></output></div>
+              <p class="note">K₁ scales every transport rate (GENESIS uses 0.1–1). Coarser sand gives a steeper profile and a narrower surf zone. The closure depth is how deep the waves move sand; the berm height B is fixed at 2&nbsp;m.</p>
+            </div>
+          </details>
+        </section>
+      </div>
+    </div>
+
+    <aside class="math" aria-labelledby="hMath">
+      <div class="math-head">
+        <h2 id="hMath">The equation right now</h2>
+        <p>The shoreline position \(y\) at each spot \(x\) along the beach changes over time \(t\). New terms appear as you add things.</p>
+      </div>
+      <div class="master" id="master"></div>
+      <div class="terms" id="terms"></div>
+      <div class="locked" id="locked"></div>
+      <details class="glossary">
+        <summary>What the symbols mean</summary>
+        <dl>
+          <dt>x</dt><dd>distance along the beach (0 at the north end)</dd>
+          <dt>y</dt><dd>shoreline position, measured seaward from the road</dd>
+          <dt>y_s, y_c</dt><dd>the long-term (alongshore) part and the storm/season (cross-shore) part</dd>
+          <dt>Q</dt><dd>longshore sand transport, m³ per year (positive = moving south/right)</dd>
+          <dt>D</dt><dd>active depth of the beach: closure depth h* + berm height B</dd>
+          <dt>H₀, T, θ₀</dt><dd>offshore wave height, period and approach angle</dd>
+          <dt>H_b, θ_b</dt><dd>wave height and angle where waves break</dd>
+          <dt>C_g</dt><dd>speed of wave energy at breaking, √(g h_b)</dd>
+          <dt>φ</dt><dd>local tilt of the shoreline</dd>
+          <dt>a₁, a₂</dt><dd>transport constants, built from K₁, K₂, sand density and porosity</dd>
+          <dt>A</dt><dd>profile shape factor from grain size (Dean profile h = A·d^{2/3})</dd>
+          <dt>S, η</dt><dd>storm surge, and mean sea level</dd>
+          <dt>W, W*</dt><dd>width of the part of the profile that responds to storms / to sea level</dd>
+        </dl>
+      </details>
+    </aside>
+  </main>
+
+  <div class="about">
+    <section>
+      <h2>How the model works</h2>
+      <p>This is a <b>one-line model</b>, the workhorse of shoreline engineering since Pelnard-Considère (1956). It treats the whole beach profile as one line that moves back and forth without changing shape, so the only thing that matters is how much sand flows along the shore.</p>
+      <p>Waves that arrive at an angle drive a current in the surf zone that carries sand along the beach. Where that flow speeds up, the beach loses sand and retreats; where it slows down (behind a groin, in the calm lee of a breakwater) the beach builds out. A second, faster part of the model moves sand between the beach and an offshore bar as waves grow and shrink, so the beach narrows in storms and heals in calm weather. Sea-level rise shifts the whole profile landward (the Bruun rule).</p>
+      <p>The sim solves these equations with finite differences on 150 cells, each 10&nbsp;m long, taking hundreds of small time steps per second.</p>
+    </section>
+    <section>
+      <h2>What it leaves out</h2>
+      <ul>
+        <li>Waves are the same everywhere along the beach except near structures; real bays like Saco Bay focus and shelter waves unevenly.</li>
+        <li>Wave conditions are monthly averages rather than real, hour-by-hour sea states, so drift rates are on the high side.</li>
+        <li>Dunes, overwash, tidal inlets, rip currents, and wave reflection off seawalls are not modelled.</li>
+        <li>The season climate is illustrative: winter swell from the east–northeast, calm summers with south–southeast swell, shaped by the UNE Camp Ellis buoy record and NOAA buoy 44007.</li>
+      </ul>
+      <p>Use it to build intuition, not to forecast a real beach.</p>
+    </section>
+    <section>
+      <h2>Sources</h2>
+      <ol>
+        <li>Pelnard-Considère, R. (1956). Essai de théorie de l'évolution des formes de rivage en plages de sable et de galets. <i>4èmes Journées de l'Hydraulique</i>.</li>
+        <li>Bakker, W.T. (1968). The dynamics of a coast with a groyne system. <i>Proc. 11th Coastal Eng. Conf.</i>; Bakker, Klein Breteler &amp; Roos (1970), <i>Proc. 12th Coastal Eng. Conf.</i>, ch. 64 (groin sheltering and diffraction).</li>
+        <li>Le Méhauté, B. &amp; Soldate, M. (1977). <i>Mathematical Modeling of Shoreline Evolution</i>. CERC Misc. Report 77-10.</li>
+        <li>Hanson, H. (1989). GENESIS: a generalized shoreline change numerical model. <i>J. Coastal Research</i> 5(1). (Transport with the ∂H/∂x term, groin bypassing, seawall constraint.)</li>
+        <li>Ozasa, H. &amp; Brampton, A.H. (1980). Mathematical modelling of beaches backed by seawalls. <i>Coastal Engineering</i> 4.</li>
+        <li>Komar, P.D. &amp; Gaughan, M.K. (1972). Airy wave theory and breaker height prediction. <i>Proc. 13th Coastal Eng. Conf.</i></li>
+        <li>U.S. Army Corps of Engineers (1984). <i>Shore Protection Manual</i>; (2002) <i>Coastal Engineering Manual</i>, EM 1110-2-1100.</li>
+        <li>Dean, R.G. (1991). Equilibrium beach profiles. <i>J. Coastal Research</i> 7(1).</li>
+        <li>Miller, J.K. &amp; Dean, R.G. (2004). A simple new shoreline change model. <i>Coastal Engineering</i> 51.</li>
+        <li>Bruun, P. (1962). Sea-level rise as a cause of shore erosion. <i>J. Waterways and Harbors Div.</i>, ASCE 88.</li>
+        <li><a href="https://www.ndbc.noaa.gov/station_page.php?station=44007" target="_blank" rel="noopener">NOAA NDBC buoy 44007, Portland</a> and the <a href="https://ekelting.github.io/UNE-Camp-Ellis-SPOT-32787C/" target="_blank" rel="noopener">UNE Camp Ellis wave buoy</a> (wave seasons and storm directions).</li>
+        <li><a href="https://tidesandcurrents.noaa.gov/sltrends/sltrends_station.shtml?id=8418150" target="_blank" rel="noopener">NOAA sea level trend, Portland ME (8418150)</a>.</li>
+      </ol>
+    </section>
+  </div>
+</div>
+
+<script src="js/sandbox.js"></script>
+</body>
+</html>
