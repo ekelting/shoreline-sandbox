@@ -12,12 +12,13 @@ You can also download this repository and open `index.html` in any modern browse
 
 ## How to use it
 
-1. **Build.** Pick a tool (Groin, T-groin / spur, Jetty, Breakwater, Seawall, Add sand, River) and click the water or the beach. Drag to set a groin's length or a breakwater's or seawall's extent. Use **Remove** or **Undo last** to take things away.
-2. **Set the waves.** Choose *Year-round* (waves change month by month) or hold one season, or drag the direction dial and the height and period sliders for custom waves.
-3. **Run time.** Press **Start model**, and use the **Speed** slider to go from 1 year every 30 seconds up to 2 years per second. **Pause model** freezes the beach; the waves keep moving.
-4. **Add weather.** Send a nor'easter or a tropical storm (the sim slows to about a day per second so you can watch), or raise the sea-level-rise slider.
-5. **Read the results.** The chart shows how far the shoreline has moved at each point, the tiles count houses at risk, and **Look** mode shows beach width and sand drift wherever you hover.
-6. **Read the math.** The panel on the right shows the equation being solved. Each structure or process you add puts a new, coloured term into it, with a plain-language explanation and live values.
+1. **Pick a place.** Start from the generic beach, or load a Maine beach (Camp Ellis, Camp Ellis with the new spur jetty, Old Orchard Beach, Pine Point, Wells Beach, Kennebunk Beach, Ogunquit Beach, Popham Beach). Each one loads that beach's main structures, which way it faces, and its wave and sand settings.
+2. **Build.** Pick a tool (Groin, T-groin / spur, Jetty, Breakwater, Seawall, Add sand, River) and click the water or the beach. Drag to set a groin's length or a breakwater's or seawall's extent. Use **Remove** or **Undo last** to take things away.
+3. **Set the waves.** Choose *Year-round* (waves change month by month) or hold one season, or drag the direction dial and the height and period sliders for custom waves.
+4. **Run time.** Press **Start model**, and use the **Speed** slider to go from 1 year every 30 seconds up to 2 years per second. **Pause model** freezes the beach; the waves keep moving.
+5. **Add weather.** Send a nor'easter or a tropical storm (the sim slows to about a day per second so you can watch), or raise the sea-level-rise slider.
+6. **Read the results.** The chart shows how far the shoreline has moved at each point, the tiles count houses at risk, and **Look** mode shows beach width and sand drift wherever you hover.
+7. **Read the math.** The panel on the right shows the equation being solved. Each structure or process you add puts a new, coloured term into it, with a plain-language explanation and live values.
 
 Not sure where to start? Try the four ready-made experiments: a groin field, a river-mouth jetty, a breakwater salient and a seawall squeeze.
 
@@ -66,7 +67,9 @@ with $k = 150\ \mathrm{yr^{-1}}$ for erosion and $8\ \mathrm{yr^{-1}}$ for recov
 
 **Sea-level rise (Bruun 1962):** retreat rate $= \dfrac{W_*}{h_*+B}\dfrac{d\eta}{dt}$, $W_* = (h_*/A)^{3/2}$.
 
-**Wave climate:** illustrative monthly offshore values for an east-facing Gulf of Maine beach (winter swell from the E–ENE, calmer summer swell from the SSE), informed by the UNE Camp Ellis wave buoy and NOAA NDBC buoy 44007. Storms: nor'easter $H_0$ = 4.5 m, $T$ = 11 s, from ENE, surge 0.9 m, 3 days; tropical storm $H_0$ = 4 m, $T$ = 13 s, from SSE, surge 0.6 m, 2 days.
+**Wave climate:** illustrative monthly offshore values for the Gulf of Maine (winter swell from the E–ENE, calmer summer swell from the SSE), informed by the UNE Camp Ellis wave buoy and NOAA NDBC buoy 44007. Storms: nor'easter $H_0$ = 4.5 m, $T$ = 11 s, from ENE, surge 0.9 m, 3 days; tropical storm $H_0$ = 4 m, $T$ = 13 s, from SSE, surge 0.6 m, 2 days.
+
+**Maine beach presets:** each place is a simplified 1.5 km stretch with its main structures at approximate sizes and positions. The monthly climate is rotated to the direction the beach faces, turned clockwise by a site-specific angle to stand in for bending by headlands and bays, and scaled by an exposure factor (e.g. 0.55 for sheltered Camp Ellis). These are teaching estimates, not calibrated values.
 
 ## Limitations
 
@@ -88,6 +91,11 @@ This is a teaching tool, not a forecast. Waves are uniform alongshore apart from
 - NOAA NDBC station 44007: https://www.ndbc.noaa.gov/station_page.php?station=44007
 - NOAA sea level trends, Portland ME 8418150: https://tidesandcurrents.noaa.gov/sltrends/sltrends_station.shtml?id=8418150
 - UNE Camp Ellis wave buoy: https://ekelting.github.io/UNE-Camp-Ellis-SPOT-32787C/
+- Maine Geological Survey, Saco Bay coastal processes and beach erosion: https://www.maine.gov/dacf/mgs/explore/marine/virtual/saco/virtual_saco_bay.pdf
+- USACE New England District, Camp Ellis Beach Shore Damage Mitigation Project: https://www.nae.usace.army.mil/Missions/Projects-Topics/Camp-Ellis/
+- Portland Press Herald (2026). Saco's Camp Ellis jetty project is underway: https://www.pressherald.com/2026/07/09/sacos-camp-ellis-jetty-project-is-underway-heres-what-you-need-to-know/
+- Webhannet River and Wells Harbor jetties: https://en.wikipedia.org/wiki/Webhannet_River
+- Maine Geological Survey (2024). Shoreline dynamics at Popham Beach State Park: https://digitalmaine.com/cgi/viewcontent.cgi?article=1636&context=mgs_publications
 
 ## License
 

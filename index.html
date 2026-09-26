@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="description" content="Build groins, jetties and breakwaters on a sandy beach, choose the waves and seasons, send storms, and watch the shoreline and its equation change.">
+<meta name="description" content="Build groins, jetties and breakwaters on a sandy beach or a real Maine beach, choose the waves and seasons, send storms, and watch the shoreline and its equation change.">
 <title>Shoreline Sandbox</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -20,7 +20,7 @@
       <h1>Shoreline <span>Sandbox</span></h1>
       <p>Build groins, jetties and breakwaters on a 1.5&nbsp;km beach, choose the waves and the season, call in a storm, and watch where the sand goes. Everything you add changes the equation on the right.</p>
     </div>
-    <p class="frame-note">Picture the beach facing east, like Saco Bay: north is to the left, south to the right, open ocean at the top.</p>
+    <p class="frame-note" id="frameNote">Picture the beach facing east, like Saco Bay: north is to the left, south to the right, open ocean at the top.</p>
   </header>
 
   <main class="layout">
@@ -29,6 +29,14 @@
         <div class="toolbar" role="toolbar" aria-label="Tools" id="toolbar"></div>
         <div class="tool-hint" id="toolHint"></div>
       </div>
+
+      <section class="places" aria-labelledby="hPlaces">
+        <div class="places-row">
+          <h2 id="hPlaces">Maine beaches</h2>
+          <div class="chips" id="placeChips" role="group" aria-label="Load a Maine beach"></div>
+        </div>
+        <p class="place-blurb" id="placeBlurb"></p>
+      </section>
 
       <section class="timebar" aria-labelledby="hTime">
         <div class="tb-row">
@@ -93,9 +101,9 @@
               <path class="arc" d="M 23.4 62 A 90 90 0 0 1 196.6 62"/>
               <g id="dialTicks"></g>
               <rect class="sand" x="4" y="114" width="212" height="16" rx="4"/>
-              <text class="lbl" x="8" y="108">N</text>
-              <text class="lbl" x="106" y="12">E</text>
-              <text class="lbl" x="202" y="108">S</text>
+              <text class="lbl" id="dlL" x="8" y="108">N</text>
+              <text class="lbl" id="dlC" x="110" y="12" text-anchor="middle">E</text>
+              <text class="lbl" id="dlR" x="212" y="108" text-anchor="end">S</text>
               <g id="dialCrests"></g>
               <line class="arrow" id="dialArrow" x1="0" y1="0" x2="0" y2="0"/>
               <path id="dialHead" fill="var(--blue)" d=""/>
@@ -134,15 +142,15 @@
         </section>
 
         <section class="ctl" aria-labelledby="hAdv">
-          <details class="adv">
-            <summary id="hAdv">Advanced settings</summary>
-            <div style="display:grid;gap:10px">
-              <div class="row"><label for="k1">Sand mobility K₁</label><input type="range" id="k1" min="0.05" max="0.8" step="0.01"><output id="k1o" for="k1"></output></div>
-              <div class="row"><label for="d50">Grain size</label><input type="range" id="d50" min="0.15" max="1" step="0.05"><output id="d50o" for="d50"></output></div>
-              <div class="row"><label for="hs">Closure depth h*</label><input type="range" id="hs" min="4" max="14" step="0.5"><output id="hso" for="hs"></output></div>
-              <p class="note">K₁ scales every transport rate (GENESIS uses 0.1–1). Coarser sand gives a steeper profile and a narrower surf zone. The closure depth is how deep the waves move sand; the berm height B is fixed at 2&nbsp;m.</p>
-            </div>
-          </details>
+          <h2 id="hAdv">Advanced settings</h2>
+          <p class="sub">The Maine beach buttons fill these in for each place.</p>
+          <div class="row"><label for="nrm">Beach faces</label><input type="range" id="nrm" min="0" max="359" step="1"><output id="nrmo" for="nrm"></output></div>
+          <div class="row"><label for="trn">Wave turning</label><input type="range" id="trn" min="-60" max="60" step="1"><output id="trno" for="trn"></output></div>
+          <div class="row"><label for="expo">Wave exposure</label><input type="range" id="expo" min="0.2" max="1.5" step="0.05"><output id="expoo" for="expo"></output></div>
+          <div class="row"><label for="k1">Sand mobility K₁</label><input type="range" id="k1" min="0.05" max="0.8" step="0.01"><output id="k1o" for="k1"></output></div>
+          <div class="row"><label for="d50">Grain size</label><input type="range" id="d50" min="0.15" max="1" step="0.05"><output id="d50o" for="d50"></output></div>
+          <div class="row"><label for="hs">Closure depth h*</label><input type="range" id="hs" min="4" max="14" step="0.5"><output id="hso" for="hs"></output></div>
+          <p class="note"><b>Beach faces</b> is the compass direction straight out to sea. <b>Wave turning</b> is how much headlands and the bay bend the offshore waves clockwise before they arrive. <b>Wave exposure</b> scales the offshore wave heights (below 1 for sheltered bays). K₁ scales every transport rate (GENESIS uses 0.1–1). Coarser sand gives a steeper profile and a narrower surf zone. The closure depth is how deep waves move sand; the berm height B is fixed at 2&nbsp;m.</p>
         </section>
       </div>
     </div>
@@ -158,10 +166,10 @@
       <details class="glossary">
         <summary>What the symbols mean</summary>
         <dl>
-          <dt>\(x\)</dt><dd>distance along the beach (0 at the north end)</dd>
+          <dt>\(x\)</dt><dd>distance along the beach (0 at the left end)</dd>
           <dt>\(y\)</dt><dd>shoreline position, measured seaward from the road</dd>
           <dt>\(y_s,\ y_c\)</dt><dd>the long-term (alongshore) part and the storm/season (cross-shore) part</dd>
-          <dt>\(Q\)</dt><dd>longshore sand transport, m³ per year (positive = moving south/right)</dd>
+          <dt>\(Q\)</dt><dd>longshore sand transport, m³ per year (positive = moving to the right)</dd>
           <dt>\(D\)</dt><dd>active depth of the beach: closure depth \(h_*\) + berm height \(B\)</dd>
           <dt>\(H_0,\ T,\ \theta_0\)</dt><dd>offshore wave height, period and approach angle</dd>
           <dt>\(H_b,\ \theta_b\)</dt><dd>wave height and angle where waves break</dd>
@@ -208,6 +216,7 @@
         <li>Bruun, P. (1962). Sea-level rise as a cause of shore erosion. <i>J. Waterways and Harbors Div.</i>, ASCE 88.</li>
         <li><a href="https://www.ndbc.noaa.gov/station_page.php?station=44007" target="_blank" rel="noopener">NOAA NDBC buoy 44007, Portland</a> and the <a href="https://ekelting.github.io/UNE-Camp-Ellis-SPOT-32787C/" target="_blank" rel="noopener">UNE Camp Ellis wave buoy</a> (wave seasons and storm directions).</li>
         <li><a href="https://tidesandcurrents.noaa.gov/sltrends/sltrends_station.shtml?id=8418150" target="_blank" rel="noopener">NOAA sea level trend, Portland ME (8418150)</a>.</li>
+        <li>Maine beach presets: <a href="https://www.maine.gov/dacf/mgs/explore/marine/virtual/saco/virtual_saco_bay.pdf" target="_blank" rel="noopener">Maine Geological Survey, Saco Bay coastal processes</a>; <a href="https://www.nae.usace.army.mil/Missions/Projects-Topics/Camp-Ellis/" target="_blank" rel="noopener">USACE Camp Ellis project</a>; <a href="https://www.pressherald.com/2026/07/09/sacos-camp-ellis-jetty-project-is-underway-heres-what-you-need-to-know/" target="_blank" rel="noopener">Press Herald (2026), Camp Ellis spur jetty</a>; <a href="https://en.wikipedia.org/wiki/Webhannet_River" target="_blank" rel="noopener">Webhannet River and Wells Harbor jetties</a>; <a href="https://digitalmaine.com/cgi/viewcontent.cgi?article=1636&amp;context=mgs_publications" target="_blank" rel="noopener">MGS (2024), Shoreline dynamics at Popham Beach</a>.</li>
       </ol>
     </section>
   </div>

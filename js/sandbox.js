@@ -22,7 +22,7 @@ const START_MONTH = 8; // September
 const S = {
   t: 0, yls: new Float64Array(N), ycs: new Float64Array(N), structures: [], fills: [], sandAdded: 0,
   storm: null, storms: 0, mode: 'cycle', H0: 1, T: 8.5, th: 0, slr: 2, eta: 0, speed: 1 / 30, playing: false,
-  K1: 0.2, d50: 0.3, hstar: 8, vol: 200000, tool: 'inspect', nextId: 1, placed: false, lastSurge: 0
+  K1: 0.2, d50: 0.3, hstar: 8, normal: 90, turn: 0, expo: 1, place: 'generic', vol: 200000, tool: 'inspect', nextId: 1, placed: false, lastSurge: 0
 };
 const y = new Float64Array(N), Hc = new Float64Array(N), Kd = new Float64Array(N), Q = new Float64Array(N + 1);
 let W = null; // current waves (breaking info)
@@ -52,14 +52,22 @@ function baseWaves() {
   if (SEASONS[S.mode]) return seasonAvg(S.mode);
   return { H0: S.H0, T: S.T, th: S.th };
 }
+// climate angles are stored for an east-facing beach; rotate them to this site's shoreline,
+// apply the bay's wave turning, and scale heights by the site's exposure
+const siteTh = th => clamp(th + (S.normal - 90) - S.turn, -80, 80);
+function siteBase() {
+  if (S.mode === 'custom') return { H0: S.H0, T: S.T, th: S.th };
+  const b = baseWaves(); return { H0: b.H0 * S.expo, T: b.T, th: siteTh(b.th) };
+}
 function currentWaves() {
-  const b = baseWaves(); let H0 = b.H0, T = b.T, th = b.th, surge = 0, sf = 0;
+  const b = siteBase(); let H0 = b.H0, T = b.T, th = b.th, surge = 0, sf = 0;
   if (S.storm) {
     const tau = (S.t - S.storm.t0) / S.storm.dur;
     if (tau >= 1) { S.storm = null; onStormEnd(); }
     else {
       const d = S.storm.def; sf = Math.pow(Math.sin(Math.PI * clamp(tau, 0, 1)), 1.2);
-      H0 = b.H0 + (d.H0 - b.H0) * sf; T = b.T + (d.T - b.T) * sf; th = b.th + (d.th - b.th) * Math.min(1, sf * 2); surge = d.surge * sf;
+      const dH = d.H0 * S.expo, dth = siteTh(d.th);
+      H0 = b.H0 + (dH - b.H0) * sf; T = b.T + (d.T - b.T) * sf; th = b.th + (dth - b.th) * Math.min(1, sf * 2); surge = d.surge * sf;
     }
   }
   const w = breaking(H0, T, th); w.surge = surge; w.sf = sf; w.H0 = H0; w.thDeg = th;
@@ -222,7 +230,7 @@ function drawCrests(w, time) {
     const s = clamp(s0 * c / c0, -0.999, 0.999); I[i] = k * Math.sqrt(1 - s * s);
   }
   F[nd - 1] = 0; for (let i = nd - 2; i >= 0; i--) F[i] = F[i + 1] + 0.5 * (I[i] + I[i + 1]) * step;
-  const phase = om * time * 2.2, hs = heads();
+  const phase = wavePhase, hs = heads();
   const lo = Math.min(0, kx * XL), hi = Math.max(0, kx * XL) + F[0];
   const nMin = Math.floor((lo - phase) / (2 * Math.PI)) - 1, nMax = Math.ceil((hi - phase) / (2 * Math.PI)) + 1;
   const dstep = 12;
@@ -407,9 +415,9 @@ function draw(time) {
     for (let i = 0; i < 90; i++) { const x = rr() * CW, yy = rr() * CH; ctx.beginPath(); ctx.moveTo(x, yy); ctx.lineTo(x - 6, yy + 14); ctx.stroke(); }
   }
   // compass + scale
-  ctx.fillStyle = 'rgba(10,26,36,0.7)'; ctx.fillRect(8, CH - 30, 70, 22);
+  ctx.fillStyle = 'rgba(10,26,36,0.7)'; ctx.fillRect(8, CH - 30, 96, 22);
   ctx.fillStyle = '#f2f7f8'; ctx.font = '600 12px ' + getComputedStyle(document.body).fontFamily;
-  ctx.fillText('← N   S →', 14, CH - 15);
+  ctx.fillText(`← ${leftDir()}   ${rightDir()} →`, 14, CH - 15);
   const bar = 200 * sc, bx = CW - bar - 16;
   ctx.fillStyle = 'rgba(10,26,36,0.7)'; ctx.fillRect(bx - 8, CH - 30, bar + 16, 22);
   ctx.fillStyle = '#f2f7f8'; ctx.fillRect(bx, CH - 14, bar, 3);
@@ -445,7 +453,7 @@ function drawChart() {
   }
   cctx.fillStyle = cMu; cctx.font = '11px ' + getComputedStyle(document.body).fontFamily; cctx.textAlign = 'right';
   cctx.fillText('+' + mx + ' m', left - 6, top + 8); cctx.fillText('0', left - 6, mid + 4); cctx.fillText('−' + mx + ' m', left - 6, bottom);
-  cctx.textAlign = 'left'; cctx.fillText('North end', left, h - 3); cctx.textAlign = 'right'; cctx.fillText('South end · 1,500 m', w, h - 3);
+  cctx.textAlign = 'left'; cctx.fillText(`${leftDir()} end`, left, h - 3); cctx.textAlign = 'right'; cctx.fillText(`${rightDir()} end · 1,500 m`, w, h - 3);
   cctx.textAlign = 'left';
   for (const s of S.structures) {
     const xs = s.x !== undefined ? [s.x] : [(s.x1 + s.x2) / 2];
@@ -576,7 +584,8 @@ function showTip(e, p) {
 
 // ---------- formatting ----------
 function fmtVol(v) { const a = Math.abs(v); return a >= 1e6 ? (a / 1e6).toFixed(2) + 'M' : a >= 1e3 ? Math.round(a / 1e3) + 'k' : Math.round(a).toString(); }
-function fmtQ(q) { return Math.abs(q) < 500 ? 'about 0' : (q > 0 ? 'south → ' : '← north ') + fmtVol(q) + ' m³/yr'; }
+const leftDir = () => compass(S.normal - 90), rightDir = () => compass(S.normal + 90);
+function fmtQ(q) { return Math.abs(q) < 500 ? 'about 0' : (q > 0 ? `toward ${rightDir()} → ` : `← toward ${leftDir()} `) + fmtVol(q) + ' m³/yr'; }
 function compass(deg) { const n = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW']; return n[((Math.round(deg / 22.5) % 16) + 16) % 16]; }
 const sgn = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(1);
 
@@ -588,9 +597,9 @@ function setMode(m) {
   $('modeSeg').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', b.dataset.mode === m));
   const notes = {
     cycle: 'Waves change month by month: winter swell from the east–northeast, calmer summer swell from the south–southeast.',
-    winter: 'Holding winter: bigger waves from the northeast, pushing sand south.',
-    spring: 'Holding spring: moderate waves arriving almost straight on.',
-    summer: 'Holding summer: small waves from the southeast, nudging sand north.',
+    winter: 'Holding winter: bigger waves from the east–northeast.',
+    spring: 'Holding spring: moderate waves from the east.',
+    summer: 'Holding summer: small waves from the south–southeast.',
     fall: 'Holding fall: moderate waves, turning from southeast to east.',
     custom: 'Your own waves: set the direction, height and period below.'
   };
@@ -598,7 +607,7 @@ function setMode(m) {
   $('waveTag').textContent = m === 'cycle' ? 'Year-round waves' : m === 'custom' ? 'Custom waves' : m[0].toUpperCase() + m.slice(1) + ' waves';
 }
 $('modeSeg').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setMode(b.dataset.mode); });
-function toCustom() { if (S.mode !== 'custom') { const b = baseWaves(); S.H0 = b.H0; S.T = b.T; S.th = b.th; setMode('custom'); } }
+function toCustom() { if (S.mode !== 'custom') { const b = siteBase(); S.H0 = b.H0; S.T = b.T; S.th = Math.round(b.th); setMode('custom'); } }
 h0.addEventListener('input', () => { toCustom(); S.H0 = +h0.value; });
 per.addEventListener('input', () => { toCustom(); S.T = +per.value; });
 slr.addEventListener('input', () => { S.slr = +slr.value; refreshTerms(); });
@@ -606,6 +615,12 @@ vol.addEventListener('input', () => { S.vol = +vol.value; });
 k1.addEventListener('input', () => { S.K1 = +k1.value; });
 d50.addEventListener('input', () => { S.d50 = +d50.value; });
 hsIn.addEventListener('input', () => { S.hstar = +hsIn.value; });
+$('nrm').addEventListener('input', () => { S.normal = +$('nrm').value; updateFrameNote(); });
+$('trn').addEventListener('input', () => { S.turn = +$('trn').value; });
+$('expo').addEventListener('input', () => { S.expo = +$('expo').value; });
+function updateFrameNote() {
+  $('frameNote').textContent = `The beach faces ${compass(S.normal)} (${Math.round(S.normal)}°): ${leftDir()} is to the left, ${rightDir()} to the right, open ocean at the top.`;
+}
 // speed slider: logarithmic, from 1 year every 30 s up to 2 years per second
 const SP_MIN = 1 / 30, SP_MAX = 2;
 const spFrom = v => SP_MIN * Math.pow(SP_MAX / SP_MIN, v / 1000);
@@ -656,9 +671,10 @@ function drawDial(th) {
   for (let k = -1; k <= 1; k++) { const cx = DC.x - (DC.r - 22 + k * 14) * Math.sin(t), cy = DC.y - (DC.r - 22 + k * 14) * Math.cos(t); cr += `<line class="crest" x1="${cx - 14 * Math.cos(t)}" y1="${cy + 14 * Math.sin(t)}" x2="${cx + 14 * Math.cos(t)}" y2="${cy - 14 * Math.sin(t)}"/>`; }
   $('dialCrests').innerHTML = cr;
   dial.setAttribute('aria-valuenow', Math.round(th));
-  const comp = 90 - th;
+  const comp = S.normal - th;
   $('dirBig').textContent = 'from ' + compass(comp);
-  $('dirSmall').textContent = `${Math.round((comp + 360) % 360)}° · ${Math.abs(Math.round(th))}° ${th > 0.5 ? 'from the north side' : th < -0.5 ? 'from the south side' : 'straight on'}`;
+  $('dirSmall').textContent = `${Math.round(((comp % 360) + 360) % 360)}° · ${Math.abs(Math.round(th))}° ${th > 0.5 ? 'from the ' + leftDir() + ' side' : th < -0.5 ? 'from the ' + rightDir() + ' side' : 'straight on'}`;
+  $('dlL').textContent = leftDir(); $('dlC').textContent = compass(S.normal); $('dlR').textContent = rightDir();
 }
 let dialDrag = false;
 function dialFromEvent(e) {
@@ -687,6 +703,85 @@ function runExperiment(k) {
   resetBeach(); placed(); refreshTerms();
   try { stage.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' }); } catch (e) {}
   setPlaying(true);
+}
+
+// ---------- Maine beach presets ----------
+// Each place is a stylised 1.5 km stretch. Structure sizes and positions are approximate; the wave
+// settings are teaching estimates (normal = direction the beach faces; turn = clockwise bending of
+// the offshore waves by headlands and the bay; expo = offshore wave-height factor).
+const FT = 0.3048;
+const PLACES = {
+  generic: { name: 'Generic beach', normal: 90, turn: 0, expo: 1, d50: 0.3, hstar: 8, K1: 0.2, build: () => {},
+    blurb: 'A straight, open beach with nothing built on it yet. A blank sandbox.' },
+  campEllis: { name: 'Camp Ellis', normal: 73, turn: 10, expo: 0.55, d50: 0.2, hstar: 7, K1: 0.2,
+    build: () => {
+      addStructure({ type: 'jetty', x: 1300, tip: YL - 25 });
+      addStructure({ type: 'seawall', x1: 980, x2: 1290, y: DUNE_TOE + 2 });
+      addStructure({ type: 'river', x: 1440, q: 40000 });
+    },
+    blurb: 'Saco, at the south end of Saco Bay. The Saco River\'s north jetty (built from the 1860s on) sits at the SSE end. Sand drifts north along the bay, so the beach beside the jetty gets no new supply and has eroded for over a century; riprap now fronts many homes. The river\'s sand is carried out past the jetty instead of feeding the beach. Waves are gentle most of the time (UNE buoy: mean 0.4 m) but storms come from the E–ENE.' },
+  campEllisSpur: { name: 'Camp Ellis + spur jetty', normal: 73, turn: 10, expo: 0.55, d50: 0.2, hstar: 7, K1: 0.2,
+    build: () => {
+      addStructure({ type: 'jetty', x: 1300, tip: YL - 25 });
+      addStructure({ type: 'breakwater', x1: 1300 - 750 * FT, x2: 1296, y: Y0 + 150 });
+      addStructure({ type: 'seawall', x1: 980, x2: 1290, y: DUNE_TOE + 2 });
+      addStructure({ type: 'river', x: 1440, q: 40000 });
+    },
+    fill: { x: 1150, V: 56000 },
+    blurb: 'Camp Ellis with the Army Corps\' 750-ft (230 m) spur jetty, built off the north jetty and running parallel to shore (construction began in 2026, due to finish in August 2027). It shelters the beach behind it. The first nourishment (about 73,000 yd³, 56,000 m³) is planned for 2028 and is already placed here.' },
+  oob: { name: 'Old Orchard Beach', normal: 110, turn: 35, expo: 0.65, d50: 0.2, hstar: 7, K1: 0.2,
+    build: () => { addStructure({ type: 'seawall', x1: 520, x2: 1050, y: DUNE_TOE + 2 }); },
+    blurb: 'The middle of Saco Bay: a wide, flat, fine-sand beach. Seawalls and riprap back its most built-up stretch. The Pier stands on open piles, so sand passes under it and it is not modelled. Net drift in Saco Bay is toward the north.' },
+  pinePoint: { name: 'Pine Point', normal: 110, turn: 40, expo: 0.6, d50: 0.2, hstar: 7, K1: 0.2,
+    build: () => { addStructure({ type: 'jetty', x: 200, tip: Y0 + 300 }); addStructure({ type: 'river', x: 90, q: 10000 }); },
+    blurb: 'Scarborough, at the north end of Saco Bay, beside the Scarborough River jetty. Sand drifting north along the bay piles up against the jetty.' },
+  wells: { name: 'Wells Beach', normal: 115, turn: 35, expo: 0.9, d50: 0.25, hstar: 8, K1: 0.2,
+    build: () => {
+      addStructure({ type: 'jetty', x: 300, tip: Y0 + 260 });
+      addStructure({ type: 'jetty', x: 430, tip: Y0 + 250 });
+      addStructure({ type: 'seawall', x1: 600, x2: 1420, y: DUNE_TOE + 2 });
+    },
+    blurb: 'Wells Harbor\'s twin rubble jetties (1960s, extended in 1965 to about 1,225 and 1,300 ft, 425 ft apart) guard the Webhannet River inlet at the NNE end, with Drakes Island beyond them. A seawall backs much of the developed Wells Beach to the south.' },
+  kennebunk: { name: 'Kennebunk Beach', normal: 165, turn: 30, expo: 0.6, d50: 0.25, hstar: 7, K1: 0.2,
+    build: () => {
+      addStructure({ type: 'seawall', x1: 180, x2: 1300, y: DUNE_TOE + 2 });
+      addStructure({ type: 'jetty', x: 1380, tip: Y0 + 250 });
+      addStructure({ type: 'river', x: 1450, q: 5000 });
+    },
+    blurb: 'Gooch\'s, Middle and Mother\'s beaches along Beach Avenue face south, with a long seawall behind them and the Kennebunk River jetties at the WSW end.' },
+  ogunquit: { name: 'Ogunquit Beach', normal: 100, turn: 0, expo: 0.9, d50: 0.25, hstar: 8, K1: 0.2,
+    build: () => { addStructure({ type: 'river', x: 1440, q: 8000 }); },
+    blurb: 'A natural barrier spit with dunes and the Ogunquit River behind it, reaching the sea at the south end. With no hard structures, it is a good control to compare with the others.' },
+  popham: { name: 'Popham Beach', normal: 180, turn: 45, expo: 0.8, d50: 0.3, hstar: 8, K1: 0.2,
+    build: () => {
+      addStructure({ type: 'river', x: 40, q: 60000 });
+      addStructure({ type: 'seawall', x1: 150, x2: 380, y: DUNE_TOE + 2 });
+      addStructure({ type: 'breakwater', x1: 1020, x2: 1180, y: Y0 + 110 });
+      addStructure({ type: 'river', x: 1460, q: 5000 });
+    },
+    blurb: 'Phippsburg. A south-facing beach between the Kennebec River (E end) and the Morse River (W end). Fox Island, a rock island just offshore, acts like a natural breakwater with a tombolo that comes and goes. A riprap seawall at Hunnewell Beach causes erosion at its end. The beach swings hundreds of feet as the river channels move, which the model can\'t capture.' }
+};
+function syncSliders() {
+  slr.value = S.slr; vol.value = S.vol; k1.value = S.K1; d50.value = S.d50; hsIn.value = S.hstar;
+  $('nrm').value = S.normal; $('trn').value = S.turn; $('expo').value = S.expo;
+  updateFrameNote();
+}
+const chips = $('placeChips');
+Object.entries(PLACES).forEach(([k, pl]) => {
+  const b = document.createElement('button'); b.type = 'button'; b.className = 'chip'; b.dataset.place = k; b.textContent = pl.name;
+  b.addEventListener('click', () => loadPlace(k)); chips.appendChild(b);
+});
+function loadPlace(k) {
+  const pl = PLACES[k]; S.place = k;
+  Object.assign(S, { normal: pl.normal, turn: pl.turn, expo: pl.expo, d50: pl.d50, hstar: pl.hstar, K1: pl.K1, slr: 2 });
+  S.structures = []; S.storm = null;
+  setMode('cycle'); resetBeach(); pl.build();
+  if (pl.fill) { const keep = S.vol; S.vol = pl.fill.V; nourish(pl.fill.x); S.vol = keep; S.fx = []; }
+  S.sandAdded = pl.fill ? pl.fill.V : 0;
+  syncSliders(); refreshTerms(); setPlaying(false);
+  chips.querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', c.dataset.place === k));
+  $('placeBlurb').innerHTML = `<b>${pl.name}.</b> ${pl.blurb}` + (k === 'generic' ? '' : ' <span class="fine">This is a simplified 1.5 km stretch: structure sizes and positions are approximate, and the settings are teaching estimates, not a calibrated model. Press Start to run it.</span>');
+  if (k !== 'generic') { placed(); }
 }
 
 function resetBeach() {
@@ -858,11 +953,12 @@ function updateReadouts() {
   const sb = $('stormBanner');
   if (S.storm) { const left = (S.storm.t0 + S.storm.dur - S.t) * 365; sb.hidden = false; sb.textContent = `${S.storm.def.name}: waves ${w.H0.toFixed(1)} m, surge ${w.surge.toFixed(1)} m · ${Math.max(0, left).toFixed(1)} days left (slow motion)`; }
   // sliders follow waves
-  const b = S.mode === 'custom' ? { H0: S.H0, T: S.T, th: S.th } : baseWaves();
+  const b = siteBase();
   if (document.activeElement !== h0) h0.value = b.H0; if (document.activeElement !== per) per.value = b.T;
   $('h0o').textContent = `${b.H0.toFixed(2)} m`; $('pero').textContent = `${b.T.toFixed(1)} s`;
   drawDial(b.th);
   $('slro').textContent = `${S.slr.toFixed(1)} mm/yr`; $('volo').textContent = `${fmtVol(S.vol)} m³`;
+  $('nrmo').textContent = `${compass(S.normal)} ${Math.round(S.normal)}°`; $('trno').textContent = `${S.turn > 0 ? '+' : ''}${S.turn}°`; $('expoo').textContent = `× ${S.expo.toFixed(2)}`;
   $('k1o').textContent = S.K1.toFixed(2); $('d50o').textContent = `${S.d50.toFixed(2)} mm`; $('hso').textContent = `${S.hstar.toFixed(1)} m`;
   // stats
   let sum = 0, mn = 1e9, mnI = 0, mx = -1e9, mxI = 0;
@@ -879,9 +975,10 @@ function updateReadouts() {
 }
 
 // ---------- main loop ----------
-let last = performance.now(), lastUI = 0;
+let last = performance.now(), lastUI = 0, wavePhase = 0;
 function frame(now) {
   const dtReal = Math.min(0.05, (now - last) / 1000); last = now;
+  wavePhase += (W ? W.om : 0.75) * dtReal * 2.2; // accumulate, so a change in period never makes the crests jump or race
   if (S.playing) { advance(dtReal); moveParticles(dtReal); }
   const tSec = now / 1000;
   draw(tSec);
@@ -890,8 +987,9 @@ function frame(now) {
 }
 
 // ---------- init ----------
-h0.value = 1; per.value = 8.5; slr.value = S.slr; vol.value = S.vol; k1.value = S.K1; d50.value = S.d50; hsIn.value = S.hstar;
+h0.value = 1; per.value = 8.5; syncSliders();
 setTool('inspect'); setMode('cycle'); setSpeed(SP_MIN); setPlaying(false);
+chips.querySelector('[data-place="generic"]').setAttribute('aria-pressed', 'true'); $('placeBlurb').innerHTML = '<b>Generic beach.</b> ' + PLACES.generic.blurb + ' Pick a Maine beach to load its structures and wave settings.';
 resize(); window.addEventListener('resize', () => { resize(); });
 resetBeach();
 refreshTerms(); updateReadouts(); drawChart();
