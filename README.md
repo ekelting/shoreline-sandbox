@@ -1,4 +1,4 @@
-# Shoreline Sandbox
+# Shoreline Sandbox 🏖️
 
 An interactive, playful shoreline-change simulator for the general public. Place groins, T-groins (spurs), jetties, offshore breakwaters, seawalls, rivers and beach nourishment on a straight 1.5 km beach. Choose the wave direction, height, period and season, send a nor'easter or a tropical storm, raise the sea level, and watch the shoreline evolve. A live panel shows the governing equation, and new terms appear as you add each structure or process.
 
@@ -18,7 +18,8 @@ You can also download this repository and open `index.html` in any modern browse
 4. **Run time.** Press **Start model**, and use the **Speed** slider to go from 1 year every 30 seconds up to 2 years per second. **Pause model** freezes the beach; the waves keep moving.
 5. **Add weather.** Send a nor'easter or a tropical storm (the sim slows to about a day per second so you can watch), or raise the sea-level-rise slider.
 6. **Read the results.** The chart shows how far the shoreline has moved at each point, the tiles count houses at risk and safe shorebird nesting areas (with chicks fledged each season), and **Look** mode shows beach width and sand drift wherever you hover.
-7. **Read the math.** The panel on the right shows the equation being solved. Each structure or process you add puts a new, coloured term into it, with a plain-language explanation and live values.
+7. **Enjoy the extras.** Pop-up messages announce storms, houses at risk, nesting seasons and tombolos, beach umbrellas appear in summer, and the ☀️ / 🌙 / 🖥️ buttons at the top switch between light, dark and automatic themes.
+8. **Read the math.** The panel on the right shows the equation being solved. Each structure or process you add puts a new, coloured term into it, with a plain-language explanation and live values.
 
 Not sure where to start? Try the four ready-made experiments: a groin field, a river-mouth jetty, a breakwater salient and a seawall squeeze.
 

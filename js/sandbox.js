@@ -391,6 +391,8 @@ function draw(time) {
       if (s.type === 'tgroin') drawRocks(s.x - s.head, s.tip, s.x + s.head, s.tip, 11, s.id + 99);
     }
   }
+  // seasonal fun: umbrellas in summer, boats, seals on breakwaters
+  drawFun(time);
   // particles
   ctx.fillStyle = 'rgba(250, 232, 180, 0.95)';
   for (const p of PARTS) {
@@ -424,6 +426,26 @@ function draw(time) {
   ctx.fillStyle = '#f2f7f8'; ctx.fillRect(bx, CH - 14, bar, 3);
   ctx.fillText('200 m', bx + bar / 2 - 16, CH - 17);
 }
+const EMOJI_FONT = '"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
+function emoji(ch, X, Y, sizePx) { ctx.font = `${sizePx}px ${EMOJI_FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(ch, px(X), py(Y)); ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; }
+function drawFun(time) {
+  const m = Math.floor(monthPos()), summer = m >= 5 && m <= 7, big = clamp(sc * 22, 12, 26);
+  ctx.globalAlpha = 1;
+  if (summer && !(W && W.sf > 0.1)) {
+    const rr = seeded(42);
+    for (let i = 0; i < 9; i++) {
+      const X = 60 + rr() * (XL - 120), wid = shoreAt(X) - DUNE_TOE, onWall = S.structures.some(s => s.type === 'seawall' && X >= s.x1 && X <= s.x2);
+      const nearNest = S.nests.some(n => Math.abs(n.x - X) < 30 + 16 * n.pairs);
+      if (wid > 45 && !onWall && !nearNest) emoji(i % 3 === 2 ? '🏐' : '⛱️', X, DUNE_TOE + wid * (0.45 + rr() * 0.2), i % 3 === 2 ? big * 0.6 : big);
+    }
+  }
+  if (!(W && W.sf > 0.1)) {
+    const bx = ((time * 9) % (XL + 200)) - 100; emoji('🚤', bx, 600, big * 0.9);
+    if (m >= 4 && m <= 8) { const sx = XL + 100 - ((time * 5 + 700) % (XL + 200)); emoji('⛵', sx, 520, big); }
+  }
+  for (const s of S.structures) if (s.type === 'breakwater') emoji('🦭', (s.x1 + s.x2) / 2 + 20 * Math.sin(time * 0.3), s.y + 12, big * 0.8);
+  const gx = (time * 20) % (XL + 300) - 150; emoji('🕊️', gx, 470 + 18 * Math.sin(time * 1.7), big * 0.6);
+}
 function drawDraft() {
   const d = draft; ctx.globalAlpha = 0.75;
   if (isStem(d)) { drawRocks(d.x, STEM_ROOT, d.x, d.tip, d.type === 'jetty' ? 18 : 10, 1); if (d.type === 'tgroin') drawRocks(d.x - d.head, d.tip, d.x + d.head, d.tip, 11, 2); }
@@ -445,19 +467,21 @@ function nestStatus(n) {
 function nestSeasonTick(w) {
   const m = Math.floor(monthPos());
   if (S.lastMonth !== m) {
-    if (m === 4) S.nests.forEach(n => { n.washed = false; });           // May: birds arrive, new nests
+    if (m === 4) { S.nests.forEach(n => { n.washed = false; }); if (S.nests.length && S.lastMonth === 3) toast('🐦 The plovers are back! Nesting season has started.'); }
     if (S.lastMonth === 7 && m === 8) {                                    // Sep: count the season's chicks
+      const before = S.fledged;
       for (const n of S.nests) {
         const st = nestStatus(n);
         if (!n.washed && st !== 'lost') S.fledged += n.pairs * CHICKS_PER_PAIR * (st === 'risk' ? 0.5 : 1);
       }
+      if (S.nests.length) { const c = Math.round(S.fledged) - Math.round(before); toast(c > 0 ? `🐣 Nesting season over: ${c} chick${c === 1 ? '' : 's'} fledged!` : '😢 Nesting season over: no chicks fledged this year.'); }
     }
     S.lastMonth = m;
   }
   // a storm during nesting season washes over nests on narrow beaches
   if (w && w.sf > 0.4 && inSeason()) for (const n of S.nests) {
     const wid = Math.min(shoreAt(n.x - 20), shoreAt(n.x), shoreAt(n.x + 20)) - DUNE_TOE;
-    if (wid < 25 + 30 * w.surge) n.washed = true;
+    if (wid < 25 + 30 * w.surge && !n.washed) { n.washed = true; toast('🌊 The storm washed over a nest!'); }
   }
 }
 function drawPlover(cx, cy, k) {
@@ -470,24 +494,51 @@ function drawPlover(cx, cy, k) {
   ctx.fillStyle = '#1d1d1d'; ctx.beginPath(); ctx.arc(4, -2.2, 0.45, 0, 7); ctx.fill();
   ctx.restore();
 }
+function drawScrape(cx, cy, r, eggs, wet) {
+  // a plover "nest" is a shallow scrape in the sand, lined with bits of shell and pebbles
+  ctx.fillStyle = wet ? 'rgba(106,169,201,0.55)' : '#cdb07c';
+  ctx.beginPath(); ctx.ellipse(cx, cy, r * 1.25, r * 0.85, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = wet ? 'rgba(80,120,150,0.5)' : '#b9955e';
+  ctx.beginPath(); ctx.ellipse(cx, cy + r * 0.1, r * 0.85, r * 0.55, 0, 0, 7); ctx.fill();
+  const rr = seeded(Math.round(cx * 7 + cy));
+  for (let i = 0; i < 14; i++) { // shell and pebble lining around the rim
+    const a = (i / 14) * Math.PI * 2 + rr() * 0.3, d = r * (1.05 + rr() * 0.2);
+    ctx.fillStyle = ['#f3ece0', '#8d7a66', '#e2d5bd', '#6f6254'][i % 4];
+    ctx.beginPath(); ctx.ellipse(cx + Math.cos(a) * d, cy + Math.sin(a) * d * 0.7, Math.max(0.9, r * 0.16), Math.max(0.7, r * 0.11), a, 0, 7); ctx.fill();
+  }
+  for (let i = 0; i < eggs; i++) { // speckled, sand-coloured eggs, pointy ends to the middle
+    const a = (i / Math.max(eggs, 1)) * Math.PI * 2 + 0.6, d = eggs > 1 ? r * 0.36 : 0;
+    const ex = cx + Math.cos(a) * d * (wet ? 2.2 : 1), ey = cy + Math.sin(a) * d * 0.6 * (wet ? 2.2 : 1);
+    ctx.fillStyle = '#efe4c8'; ctx.strokeStyle = 'rgba(90,70,40,0.6)'; ctx.lineWidth = 0.6;
+    ctx.beginPath(); ctx.ellipse(ex, ey, Math.max(1.6, r * 0.3), Math.max(1.2, r * 0.22), a, 0, 7); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#4a3a2a';
+    for (let k = 0; k < 3; k++) { ctx.beginPath(); ctx.arc(ex + (rr() - 0.5) * r * 0.35, ey + (rr() - 0.5) * r * 0.25, Math.max(0.35, r * 0.045), 0, 7); ctx.fill(); }
+  }
+}
 function drawNests() {
   const season = inSeason();
   for (const n of S.nests) {
     const st = nestStatus(n), sh = shoreAt(n.x);
-    const y1 = DUNE_TOE + 2, y2 = Math.min(DUNE_TOE + 24, sh - 1);
-    const x1 = px(n.x - 30), x2 = px(n.x + 30), top = py(Math.max(y1 + 2, y2)), bot = py(y1);
-    ctx.setLineDash([3, 2]); ctx.lineWidth = 1.2;
-    ctx.strokeStyle = st === 'lost' ? 'rgba(90,90,90,0.8)' : st === 'risk' ? '#d95926' : '#2f5e3a';
+    const y1 = DUNE_TOE + 2, y2 = Math.min(DUNE_TOE + 26, sh - 1);
+    const half = 14 + 16 * n.pairs;
+    const x1 = px(n.x - half), x2 = px(n.x + half), top = py(Math.max(y1 + 2, y2)), bot = py(y1), cy = (top + bot) / 2;
+    // symbolic fencing: rope strung between stakes
+    const rope = st === 'lost' ? 'rgba(90,90,90,0.8)' : st === 'risk' ? '#d95926' : '#7a5a36';
+    ctx.strokeStyle = rope; ctx.lineWidth = 1.1; ctx.setLineDash([4, 2]);
     ctx.strokeRect(x1, top, x2 - x1, bot - top); ctx.setLineDash([]);
-    ctx.fillStyle = ctx.strokeStyle; ctx.fillRect(x1 - 1, top - 1, 2, bot - top + 2); ctx.fillRect(x2 - 1, top - 1, 2, bot - top + 2);
-    const k = Math.max(1.1, Math.min(1.9, sc * 2.8));
+    ctx.fillStyle = rope;
+    for (const sx of [x1, (x1 + x2) / 2, x2]) for (const sy of [top, bot]) ctx.fillRect(sx - 1.2, sy - 2, 2.4, 4);
     if (st === 'lost') {
-      ctx.strokeStyle = '#d95926'; ctx.lineWidth = 2; const cx = (x1 + x2) / 2, cy = (top + bot) / 2;
-      ctx.beginPath(); ctx.moveTo(cx - 5, cy - 4); ctx.lineTo(cx + 5, cy + 4); ctx.moveTo(cx + 5, cy - 4); ctx.lineTo(cx - 5, cy + 4); ctx.stroke();
-    } else if (season && !n.washed) {
-      for (let i = 0; i < n.pairs; i++) drawPlover(x1 + (x2 - x1) * (i + 1) / (n.pairs + 1), (top + bot) / 2, k);
-    } else if (season && n.washed) {
-      ctx.fillStyle = '#6aa9c9'; for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.ellipse(x1 + (x2 - x1) * (i + 1) / 4, (top + bot) / 2, 1.8, 1.3, 0, 0, 7); ctx.fill(); }
+      ctx.strokeStyle = '#d95926'; ctx.lineWidth = 2; const cx = (x1 + x2) / 2;
+      ctx.beginPath(); ctx.moveTo(cx - 6, cy - 5); ctx.lineTo(cx + 6, cy + 5); ctx.moveTo(cx + 6, cy - 5); ctx.lineTo(cx - 6, cy + 5); ctx.stroke();
+      continue;
+    }
+    const r = clamp(sc * 9, 5, 12), k = clamp(sc * 2.5, 1, 2.3);
+    for (let i = 0; i < n.pairs; i++) {
+      const nx = x1 + (x2 - x1) * (i + 1) / (n.pairs + 1) - r * 0.6;
+      if (season && !n.washed) { drawScrape(nx, cy, r, 4, false); drawPlover(nx + r * 2.3, cy - r * 0.2, k); }
+      else if (season && n.washed) drawScrape(nx, cy, r, 3, true);
+      else drawScrape(nx, cy, r * 0.85, 0, false);
     }
   }
 }
@@ -599,12 +650,19 @@ function addStructure(d) {
   if (s.type === 'river') { s.cell = clamp(Math.floor(s.x / DX), 0, N - 1); }
   S.structures.push(s); placed(); refreshTerms();
 }
+function toast(msg) {
+  const box = $('toasts'); if (!box) return;
+  while (box.children.length > 2) box.firstChild.remove();
+  const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; box.appendChild(t);
+  setTimeout(() => t.classList.add('out'), 3400); setTimeout(() => t.remove(), 4000);
+}
 function placed() { if (!S.placed) { S.placed = true; document.getElementById('hint').hidden = true; } }
 function nourish(X) {
   const V = S.vol, sig0 = 120, Dd = Dact();
   for (let i = 0; i < N; i++) { const x = (i + 0.5) * DX; S.yls[i] += V / (Dd * sig0 * Math.sqrt(2 * Math.PI)) * Math.exp(-((x - X) ** 2) / (2 * sig0 * sig0)); }
   S.fills.push({ x: X, V, t: S.t }); S.sandAdded += V;
   fx.push({ x: X, t0: performance.now() / 1000, label: '+' + fmtVol(V) + ' m³' });
+  if (!S.silent) toast(`🚚 Beep beep! ${fmtVol(V)} m³ of sand delivered.`);
   placed(); totals(); refreshTerms(true);
 }
 function eraseAt(p) {
@@ -618,7 +676,7 @@ function eraseAt(p) {
     if (d < bd) { bd = d; best = s; }
   }
   let bestNest = null;
-  for (const n of S.nests) { const d = seg(n.x - 30, DUNE_TOE + 12, n.x + 30, DUNE_TOE + 12); if (d < bd) { bd = d; bestNest = n; } }
+  for (const n of S.nests) { const hw = 14 + 16 * n.pairs; const d = seg(n.x - hw, DUNE_TOE + 12, n.x + hw, DUNE_TOE + 12); if (d < bd) { bd = d; bestNest = n; } }
   if (bestNest) { S.nests = S.nests.filter(n => n !== bestNest); return; }
   if (best) { S.structures = S.structures.filter(s => s !== best); refreshTerms(); }
 }
@@ -644,7 +702,7 @@ const tip = document.getElementById('tip');
 function showTip(e, p) {
   const r = stage.getBoundingClientRect();
   const sh = shoreAt(p.X), q = faceQ(p.X), width = sh - DUNE_TOE, i = clamp(Math.floor(p.X / DX), 0, N - 1);
-  const nest = S.nests.find(n => Math.abs(n.x - p.X) < 32 && p.Y < DUNE_TOE + 40 && p.Y > DUNE_TOE - 10);
+  const nest = S.nests.find(n => Math.abs(n.x - p.X) < 14 + 16 * n.pairs && p.Y < DUNE_TOE + 40 && p.Y > DUNE_TOE - 10);
   const nestTxt = nest ? `<br><b>Shorebird nesting area</b>: ${nest.pairs} plover pair${nest.pairs > 1 ? 's' : ''}, ${{ ok: 'safe', risk: 'at risk (narrow beach)', lost: 'lost (no dry beach)' }[nestStatus(nest)]}${nest.washed && inSeason() ? ', washed out this season' : ''}` : '';
   tip.innerHTML = `<span class="mono">x = ${Math.round(p.X)} m</span><br>Dry beach ${Math.max(0, width).toFixed(0)} m wide (${(sh - Y0 >= 0 ? '+' : '−') + Math.abs(sh - Y0).toFixed(1)} m)<br>Drift ${fmtQ(q)}<br>Breaking waves ${(Hc[i] || 0).toFixed(2)} m${nestTxt}`;
   tip.style.left = Math.min(e.clientX - r.left, r.width - 280) + 'px'; tip.style.top = Math.min(e.clientY - r.top, r.height - 130) + 'px';
@@ -701,6 +759,7 @@ function speedLabel(sp) {
 function setSpeed(sp) { S.speed = sp; $('speed').value = spTo(sp); $('speedo').textContent = speedLabel(sp); $('speed').setAttribute('aria-valuetext', speedLabel(sp)); }
 $('speed').addEventListener('input', () => { S.speed = spFrom(+$('speed').value); $('speedo').textContent = speedLabel(S.speed); $('speed').setAttribute('aria-valuetext', speedLabel(S.speed)); });
 function setPlaying(v) {
+  if (v && !S.playing && S.t === 0) toast('🏁 And we\'re off!');
   S.playing = v;
   $('btnStart').disabled = v; $('btnPause').disabled = !v;
   $('runStatus').innerHTML = v ? '<b>Running.</b> Sand is moving; time is passing.' : (S.t > 0 ? '<b>Paused.</b> Waves still animate, but the beach and clock are frozen.' : '<b>Ready.</b> Add structures now, then press Start.');
@@ -715,11 +774,12 @@ $('btnTropical').addEventListener('click', () => startStorm('tropical'));
 function startStorm(k) {
   if (S.storm) return;
   const def = STORMS[k]; S.storm = { def, t0: S.t, dur: def.days / 365 }; S.storms++;
+  toast(k === 'noreaster' ? '🌬️ Nor\'easter incoming! Batten down the hatches.' : '🌀 Tropical storm incoming!');
   $('btnNoreaster').disabled = $('btnTropical').disabled = true;
   setPlaying(true);
   refreshTerms(true);
 }
-function onStormEnd() { $('btnNoreaster').disabled = $('btnTropical').disabled = false; $('stormBanner').hidden = true; setTimeout(() => refreshTerms(), 0); }
+function onStormEnd() { toast('☀️ The storm has passed. Watch the beach slowly heal.'); $('btnNoreaster').disabled = $('btnTropical').disabled = false; $('stormBanner').hidden = true; setTimeout(() => refreshTerms(), 0); }
 
 // wave direction dial
 const dial = $('dial'), DC = { x: 110, y: 112, r: 90 };
@@ -846,16 +906,16 @@ function loadPlace(k) {
   S.structures = []; S.storm = null;
   S.nests = (pl.nests || []).map(([x, pairs]) => ({ x, pairs, washed: false }));
   setMode('cycle'); resetBeach(); pl.build();
-  if (pl.fill) { const keep = S.vol; S.vol = pl.fill.V; nourish(pl.fill.x); S.vol = keep; S.fx = []; }
+  if (pl.fill) { const keep = S.vol; S.vol = pl.fill.V; S.silent = true; nourish(pl.fill.x); S.silent = false; S.vol = keep; }
   S.sandAdded = pl.fill ? pl.fill.V : 0;
   syncSliders(); refreshTerms(); setPlaying(false);
   chips.querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', c.dataset.place === k));
   $('placeBlurb').innerHTML = `<b>${pl.name}.</b> ${pl.blurb}` + (k === 'generic' ? '' : ' <span class="fine">This is a simplified 1.5 km stretch: structure sizes and positions are approximate, and the settings are teaching estimates, not a calibrated model. Press Start to run it.</span>');
-  if (k !== 'generic') { placed(); }
+  if (k !== 'generic') { placed(); toast(`📍 Welcome to ${pl.name}! Press Start when you're ready.`); }
 }
 
 function resetBeach() {
-  S.t = 0; S.eta = 0; S.fills = []; S.sandAdded = 0; S.storms = 0; S.storm = null; S.fledged = 0; S.lastMonth = -1; S.nests.forEach(n => { n.washed = false; });
+  S.alert = null; S.t = 0; S.eta = 0; S.fills = []; S.sandAdded = 0; S.storms = 0; S.storm = null; S.fledged = 0; S.lastMonth = -1; S.nests.forEach(n => { n.washed = false; });
   $('btnNoreaster').disabled = $('btnTropical').disabled = false;
   W = currentWaves();
   const yeq = -W_CS * (0.068 * W.Hb) / (BERM + 1.28 * W.Hb);
@@ -1038,6 +1098,10 @@ function updateReadouts() {
   $('stWorst').textContent = `${sgn(Math.min(0, mn))} m`; $('stWorstS').textContent = mn < -0.5 ? `at ${Math.round((mnI + 0.5) * DX)} m` : 'none yet';
   $('stBest').textContent = `${sgn(Math.max(0, mx))} m`; $('stBestS').textContent = mx > 0.5 ? `at ${Math.round((mxI + 0.5) * DX)} m` : 'none yet';
   let risk = 0, lost = 0; for (const hx of HOUSES) { const s = houseStatus(hx); if (s === 'risk') risk++; if (s === 'lost') lost++; }
+  if (S.playing && S.alert) {
+    if (lost > S.alert.lost) toast('🏚️ Oh no, a house has been flooded!');
+    else if (risk + lost > S.alert.risk) toast('🏠 A house is now at risk!');
+  }
   $('stHouses').textContent = `${risk + lost} / ${HOUSES.length}`;
   $('stHousesS').textContent = lost ? `${lost} flooded, ${risk} with under 15 m of beach` : 'beach under 15 m wide';
   $('stHouseBox').className = 'stat' + (risk + lost ? ' bad' : '');
@@ -1048,6 +1112,12 @@ function updateReadouts() {
   const chicks = Math.round(S.fledged);
   $('stNestsS').textContent = !nn ? 'add a nesting area' : `${inSeason() ? 'Nesting now' : 'Off season'} · ${chicks} chick${chicks === 1 ? '' : 's'} fledged` + (nWash ? ` · ${nWash} washed out` : '') + (nLost ? ` · ${nLost} lost` : '');
   $('stNestBox').className = 'stat' + (nn && (nRisk || nLost || nWash) ? ' bad' : '');
+  let tomb = 0; for (const s of S.structures) if (s.type === 'breakwater') { const xm = (s.x1 + s.x2) / 2; if (s.y - shoreAt(xm) < 8) tomb++; }
+  if (S.playing && S.alert) {
+    if (nLost > S.alert.nLost) toast('🪹 A nesting area just lost its beach.');
+    if (tomb > S.alert.tomb) toast('🏝️ Tombolo! The beach has joined the breakwater.');
+  }
+  S.alert = { lost, risk: risk + lost, nLost, tomb };
 }
 
 // ---------- main loop ----------
@@ -1061,6 +1131,21 @@ function frame(now) {
   if (now - lastUI > 200) { lastUI = now; updateReadouts(); updateLive(); drawChart(); }
   requestAnimationFrame(frame);
 }
+
+// ---------- light / dark ----------
+function applyTheme(t, save) {
+  const root = document.documentElement;
+  if (t === 'auto') root.removeAttribute('data-theme'); else root.setAttribute('data-theme', t);
+  $('themeSeg').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', b.dataset.themeSet === t));
+  if (save) { try { localStorage.setItem('shoreline-theme', t); } catch (e) {} }
+  drawChart();
+}
+$('themeSeg').addEventListener('click', e => { const b = e.target.closest('button'); if (b) applyTheme(b.dataset.themeSet, true); });
+(function initTheme() {
+  let t = null; try { t = localStorage.getItem('shoreline-theme'); } catch (e) {}
+  if (t) applyTheme(t, false);
+  else { const cur = document.documentElement.getAttribute('data-theme'); $('themeSeg').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', b.dataset.themeSet === (cur || 'auto'))); }
+})();
 
 // ---------- init ----------
 h0.value = 1; per.value = 8.5; syncSliders();
