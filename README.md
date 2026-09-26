@@ -4,20 +4,22 @@ An interactive, playful shoreline-change simulator for the general public. Place
 
 The beach is generic, oriented like Saco Bay, Maine (it faces east, with north on the left). A Saco Bay version is planned.
 
-## Run it
+## Try it
 
-It is a static site: no build step, no server code.
+**Live site:** https://ekelting.github.io/shoreline-sandbox/
 
-- **Locally:** open `index.html` in a browser (an internet connection is needed for fonts and the MathJax equation renderer).
-- **GitHub Pages:** push this folder to a repository, then go to *Settings → Pages → Build and deployment*, choose *Deploy from a branch*, select `main` and `/ (root)`, and save. The site appears at `https://<user>.github.io/<repo>/`.
+You can also download this repository and open `index.html` in any modern browser. An internet connection is needed for the fonts and the equation renderer.
 
-```bash
-git init -b main
-git add .
-git commit -m "Shoreline Sandbox"
-git remote add origin https://github.com/<user>/shoreline-sandbox.git
-git push -u origin main
-```
+## How to use it
+
+1. **Build.** Pick a tool (Groin, T-groin / spur, Jetty, Breakwater, Seawall, Add sand, River) and click the water or the beach. Drag to set a groin's length or a breakwater's or seawall's extent. Use **Remove** or **Undo last** to take things away.
+2. **Set the waves.** Choose *Year-round* (waves change month by month) or hold one season, or drag the direction dial and the height and period sliders for custom waves.
+3. **Run time.** Press **Start model**, and use the **Speed** slider to go from 1 year every 30 seconds up to 2 years per second. **Pause model** freezes the beach; the waves keep moving.
+4. **Add weather.** Send a nor'easter or a tropical storm (the sim slows to about a day per second so you can watch), or raise the sea-level-rise slider.
+5. **Read the results.** The chart shows how far the shoreline has moved at each point, the tiles count houses at risk, and **Look** mode shows beach width and sand drift wherever you hover.
+6. **Read the math.** The panel on the right shows the equation being solved. Each structure or process you add puts a new, coloured term into it, with a plain-language explanation and live values.
+
+Not sure where to start? Try the four ready-made experiments: a groin field, a river-mouth jetty, a breakwater salient and a seawall squeeze.
 
 ## Files
 
@@ -26,7 +28,7 @@ git push -u origin main
 | `index.html` | Page layout, controls and text |
 | `css/style.css` | Styles (light and dark themes) |
 | `js/sandbox.js` | Model, rendering, tools and the equation panel |
-| `js/mathjax-config.js` | MathJax settings (MathJax 3.2.2 loads from cdnjs) |
+| `js/mathjax-config.js` | Settings for MathJax 3.2.2, which draws the equations |
 
 ## The model
 

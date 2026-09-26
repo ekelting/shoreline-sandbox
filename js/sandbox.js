@@ -21,7 +21,7 @@ const START_MONTH = 8; // September
 // ---------- state ----------
 const S = {
   t: 0, yls: new Float64Array(N), ycs: new Float64Array(N), structures: [], fills: [], sandAdded: 0,
-  storm: null, storms: 0, mode: 'cycle', H0: 1, T: 8.5, th: 0, slr: 2, eta: 0, speed: 0.5, playing: false,
+  storm: null, storms: 0, mode: 'cycle', H0: 1, T: 8.5, th: 0, slr: 2, eta: 0, speed: 1 / 30, playing: false,
   K1: 0.2, d50: 0.3, hstar: 8, vol: 200000, tool: 'inspect', nextId: 1, placed: false, lastSurge: 0
 };
 const y = new Float64Array(N), Hc = new Float64Array(N), Kd = new Float64Array(N), Q = new Float64Array(N + 1);
@@ -255,7 +255,7 @@ function drawCrests(w, time) {
 const PARTS = Array.from({ length: 240 }, (_, i) => ({ x: Math.random() * XL, f: Math.random(), j: Math.random() }));
 function faceQ(X) { const j = clamp(Math.round(X / DX), 0, N); return Q[j]; }
 function moveParticles(dtReal) {
-  const scale = S.storm ? 0.6 : Math.sqrt(S.speed / 0.5);
+  const scale = S.storm ? 0.6 : clamp(Math.sqrt(S.speed / 0.5), 0.45, 2);
   for (const p of PARTS) {
     const q = faceQ(p.x), v = Math.sign(q) * Math.min(95, 26 * Math.sqrt(Math.abs(q) / 1e5)) * scale * (0.6 + 0.8 * p.j);
     const nx = p.x + v * dtReal;
@@ -606,8 +606,16 @@ vol.addEventListener('input', () => { S.vol = +vol.value; });
 k1.addEventListener('input', () => { S.K1 = +k1.value; });
 d50.addEventListener('input', () => { S.d50 = +d50.value; });
 hsIn.addEventListener('input', () => { S.hstar = +hsIn.value; });
-$('speedSeg').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setSpeed(+b.dataset.speed); });
-function setSpeed(v) { S.speed = v; $('speedSeg').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', +b.dataset.speed === v)); }
+// speed slider: logarithmic, from 1 year every 30 s up to 2 years per second
+const SP_MIN = 1 / 30, SP_MAX = 2;
+const spFrom = v => SP_MIN * Math.pow(SP_MAX / SP_MIN, v / 1000);
+const spTo = sp => Math.round(1000 * Math.log(sp / SP_MIN) / Math.log(SP_MAX / SP_MIN));
+function speedLabel(sp) {
+  if (sp < 0.95) { const s = 1 / sp; return `1 year every ${s >= 10 ? Math.round(s) : s.toFixed(1)} s`; }
+  return `${sp < 1.05 ? '1 year' : sp.toFixed(1) + ' years'} per second`;
+}
+function setSpeed(sp) { S.speed = sp; $('speed').value = spTo(sp); $('speedo').textContent = speedLabel(sp); $('speed').setAttribute('aria-valuetext', speedLabel(sp)); }
+$('speed').addEventListener('input', () => { S.speed = spFrom(+$('speed').value); $('speedo').textContent = speedLabel(S.speed); $('speed').setAttribute('aria-valuetext', speedLabel(S.speed)); });
 function setPlaying(v) {
   S.playing = v;
   $('btnStart').disabled = v; $('btnPause').disabled = !v;
@@ -671,10 +679,10 @@ document.querySelectorAll('[data-exp]').forEach(b => b.addEventListener('click',
 function runExperiment(k) {
   S.structures = []; S.storm = null; $('btnNoreaster').disabled = $('btnTropical').disabled = false;
   S.slr = 2;
-  if (k === 'groins') { setMode('winter'); [450, 650, 850, 1050].forEach(x => addStructure({ type: 'groin', x, tip: Y0 + 130 })); setSpeed(0.5); }
-  if (k === 'jetty') { setMode('cycle'); addStructure({ type: 'jetty', x: 900, tip: Y0 + 320 }); addStructure({ type: 'river', x: 930, q: 40000 }); setSpeed(2); }
-  if (k === 'salient') { setMode('custom'); S.H0 = 1.2; S.T = 9; S.th = 0; addStructure({ type: 'breakwater', x1: 620, x2: 860, y: Y0 + 120 }); setSpeed(0.5); }
-  if (k === 'squeeze') { setMode('winter'); S.slr = 15; addStructure({ type: 'groin', x: 420, tip: Y0 + 140 }); addStructure({ type: 'seawall', x1: 600, x2: 1150, y: DUNE_TOE + 2 }); setSpeed(2); }
+  if (k === 'groins') { setMode('winter'); [450, 650, 850, 1050].forEach(x => addStructure({ type: 'groin', x, tip: Y0 + 130 })); }
+  if (k === 'jetty') { setMode('cycle'); addStructure({ type: 'jetty', x: 900, tip: Y0 + 320 }); addStructure({ type: 'river', x: 930, q: 40000 }); }
+  if (k === 'salient') { setMode('custom'); S.H0 = 1.2; S.T = 9; S.th = 0; addStructure({ type: 'breakwater', x1: 620, x2: 860, y: Y0 + 120 }); }
+  if (k === 'squeeze') { setMode('winter'); S.slr = 15; addStructure({ type: 'groin', x: 420, tip: Y0 + 140 }); addStructure({ type: 'seawall', x1: 600, x2: 1150, y: DUNE_TOE + 2 }); }
   slr.value = S.slr;
   resetBeach(); placed(); refreshTerms();
   try { stage.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' }); } catch (e) {}
@@ -724,32 +732,32 @@ function masterTeX(a) {
 const TERMS = [
   { key: 'budget', core: true, c: 'blue', title: 'Sand budget', tag: 'always on',
     tex: String.raw`\frac{\partial y_s}{\partial t} = -\frac{1}{D}\frac{\partial Q}{\partial x}`,
-    text: 'Think of the beach as a row of buckets. Where more sand leaves a stretch than arrives (Q grows along the shore), the shoreline moves back. D is the depth of beach that moves: closure depth h* plus berm height B.',
+    text: 'Think of the beach as a row of buckets. Where more sand leaves a stretch than arrives (\\(Q\\) grows along the shore), the shoreline moves back. \\(D\\) is the depth of beach that moves: closure depth \\(h_*\\) plus berm height \\(B\\).',
     live: [['D', 'D'], ['Beach length', 'len']] },
   { key: 'drift', core: true, c: 'blue', title: 'Longshore drift', tag: 'always on',
     tex: String.raw`Q = \left(H_b^2C_g\right)_b\,a_1\sin 2(\theta_b-\phi),\qquad \phi=\arctan\frac{\partial y}{\partial x}`,
-    text: 'Waves that hit the beach at an angle push sand along it, fastest at 45° and not at all when they arrive straight on. φ is the local tilt of the shoreline, so a beach that turns to face the waves slows its own drift.',
-    live: [['Drift mid-beach', 'Qmid'], ['a₁', 'a1']] },
+    text: 'Waves that hit the beach at an angle push sand along it, fastest at 45° and not at all when they arrive straight on. \\(\\phi\\) is the local tilt of the shoreline, so a beach that turns to face the waves slows its own drift.',
+    live: [['Drift mid-beach', 'Qmid'], ['\\(a_1\\)', 'a1']] },
   { key: 'waves', core: true, c: 'blue', title: 'Waves reaching the beach', tag: 'always on',
     tex: String.raw`H_b = 0.39\,g^{1/5}\left(T H_0^2\right)^{2/5},\qquad \frac{\sin\theta_b}{C_b} = \frac{\sin\theta_0}{C_0}`,
-    text: 'Offshore waves of height H₀ and period T grow as the water shallows and break at height H_b. They also bend (refract) to face the beach, so a steep offshore angle becomes a small one at the breakers.',
-    live: [['H₀', 'H0'], ['H_b', 'Hb'], ['θ₀ → θ_b', 'ang'], ['Surf zone', 'yB']] },
+    text: 'Offshore waves of height \\(H_0\\) and period \\(T\\) grow as the water shallows and break at height \\(H_b\\). They also bend (refract) to face the beach, so a steep offshore angle becomes a small one at the breakers.',
+    live: [['\\(H_0\\)', 'H0'], ['\\(H_b\\)', 'Hb'], ['\\(\\theta_0 \\to \\theta_b\\)', 'ang'], ['Surf zone', 'yB']] },
   { key: 'cross', core: true, c: 'blue', title: 'Beach breathing (cross-shore)', tag: 'always on',
     tex: String.raw`\frac{\partial y_c}{\partial t}=k\,(y_{eq}-y_c),\qquad y_{eq}=-W\frac{0.068H_b+S}{B+1.28H_b}`,
-    text: 'Big waves pull sand off the beach into an offshore bar, so the beach narrows; calm waves push it back. Erosion is fast (k about 150 per year, days) and recovery is slow (k about 8 per year, weeks). This is why beaches are narrower in winter.',
-    live: [['y_eq now', 'yeq'], ['y_c now', 'yc']] },
+    text: 'Big waves pull sand off the beach into an offshore bar, so the beach narrows; calm waves push it back. Erosion is fast (\\(k \\approx 150\\) per year, days) and recovery is slow (\\(k \\approx 8\\) per year, weeks). This is why beaches are narrower in winter.',
+    live: [['\\(y_{eq}\\) now', 'yeq'], ['\\(y_c\\) now', 'yc']] },
   { key: 'smooth', core: true, c: 'blue', title: 'Why bumps spread out', tag: 'the big idea',
     tex: String.raw`\frac{\partial y}{\partial t} \approx \varepsilon\,\frac{\partial^2 y}{\partial x^2},\qquad \varepsilon = \frac{2Q_0}{D}`,
     text: 'For small angles the drift equation turns into the heat equation (Pelnard-Considère, 1956). A bump of sand spreads out along the shore the way heat spreads along a metal bar.',
-    live: [['ε', 'eps'], ['A 500 m bump spreads in', 'tspread']] },
+    live: [['\\(\\varepsilon\\)', 'eps'], ['A 500 m bump spreads in', 'tspread']] },
   { key: 'groin', c: 'orange', title: 'Groins, spurs and jetties', tag: 'from your structures',
-    tex: String.raw`Q(x_g) = \mathrm{BYP}\cdot Q,\qquad \mathrm{BYP} = 1-\frac{y_G}{y_B},\qquad y_B = \left(\frac{h_b}{A}\right)^{3/2}`,
-    text: 'A groin blocks the part of the surf zone it reaches, so sand piles up on the updrift side and the downdrift side starves. y_G is how far it sticks out past the shoreline and y_B is the surf-zone width. Once sand reaches the tip, it bypasses. Waves are also calmer in its lee (Bakker, 1968).',
+    tex: String.raw`\begin{gathered}Q(x_g) = \mathrm{BYP}\cdot Q\\ \mathrm{BYP} = 1-\frac{y_G}{y_B},\qquad y_B = \left(\frac{h_b}{A}\right)^{3/2}\end{gathered}`,
+    text: 'A groin blocks the part of the surf zone it reaches, so sand piles up on the updrift side and the downdrift side starves. \\(y_G\\) is how far it sticks out past the shoreline and \\(y_B\\) is the surf-zone width. Once sand reaches the tip, it bypasses. Waves are also calmer in its lee (Bakker, 1968).',
     live: [['Bypassing', 'byp']], lock: 'Add a groin, spur or jetty' },
   { key: 'breakwater', c: 'purple', title: 'Breakwater shadow', tag: 'from your structures',
-    tex: String.raw`Q = \left(H_b^2C_g\right)_b\left[a_1\sin2(\theta_b-\phi) - a_2\cos(\theta_b-\phi)\frac{\partial H_b}{\partial x}\right],\qquad H_b \to K_d\,H_b`,
-    text: 'Behind a breakwater the waves are smaller (K_d < 1) because they only reach it by bending around the ends (diffraction). Sand flows from where waves are big to where they are small, building a bulge called a salient. If it reaches the breakwater it becomes a tombolo.',
-    live: [['Smallest K_d on shore', 'kd'], ['Shape', 'salient']], lock: 'Add a breakwater or T-groin' },
+    tex: String.raw`\begin{gathered}Q = \left(H_b^2C_g\right)_b\left[a_1\sin2(\theta_b-\phi) - a_2\cos(\theta_b-\phi)\frac{\partial H_b}{\partial x}\right]\\ H_b \to K_d\,H_b \ \text{behind the breakwater}\end{gathered}`,
+    text: 'Behind a breakwater the waves are smaller (\\(K_d \\lt 1\\)) because they only reach it by bending around the ends (diffraction). Sand flows from where waves are big to where they are small, building a bulge called a salient. If it reaches the breakwater it becomes a tombolo.',
+    live: [['Smallest \\(K_d\\) on shore', 'kd'], ['Shape', 'salient']], lock: 'Add a breakwater or T-groin' },
   { key: 'seawall', c: 'slate', title: 'Seawall', tag: 'from your structures',
     tex: String.raw`y(x,t) \ge y_w`,
     text: 'A seawall stops the shoreline from moving landward, but it does not stop sand from leaving. The beach in front narrows and can disappear. This is called coastal squeeze.',
@@ -760,15 +768,15 @@ const TERMS = [
     live: [['Supply', 'qr']], lock: 'Add a river' },
   { key: 'fill', c: 'green', title: 'Beach nourishment', tag: 'from your fills',
     tex: String.raw`q(x,t) = \frac{V}{\sqrt{2\pi}\,\sigma}\,e^{-(x-x_n)^2/2\sigma^2}\,\delta(t-t_n)`,
-    text: 'Trucks or dredges add a volume V of sand in one go. The bump then spreads along the shore (the heat equation again), feeding the neighbours and slowly flattening out.',
+    text: 'Trucks or dredges add a volume \\(V\\) of sand in one go. The bump then spreads along the shore (the heat equation again), feeding the neighbours and slowly flattening out.',
     live: [['Fills', 'nfill'], ['Total added', 'vfill']], lock: 'Add sand' },
   { key: 'storm', c: 'amber', title: 'Storm surge', tag: 'from your storms',
     tex: String.raw`y_{eq} = -W\,\frac{0.068H_b + S}{B+1.28H_b}`,
-    text: 'During a storm the water rises by the surge S and the waves are huge, so the equilibrium beach sits far landward. The beach races toward it for a few days, then slowly recovers as sand comes back from the bar.',
-    live: [['Surge S', 'surge'], ['Storms so far', 'nstorm']], lock: 'Send a storm' },
+    text: 'During a storm the water rises by the surge \\(S\\) and the waves are huge, so the equilibrium beach sits far landward. The beach races toward it for a few days, then slowly recovers as sand comes back from the bar.',
+    live: [['Surge \\(S\\)', 'surge'], ['Storms so far', 'nstorm']], lock: 'Send a storm' },
   { key: 'slr', c: 'teal', title: 'Sea-level rise (Bruun rule)', tag: 'from the sea-level slider',
     tex: String.raw`\frac{\partial y_s}{\partial t} \mathrel{+}= -\frac{W_*}{h_*+B}\,\frac{d\eta}{dt}`,
-    text: 'As the sea rises, the whole beach profile shifts up and landward to keep its shape. Each millimetre of rise moves the shoreline back by W*/(h*+B) millimetres, often 50 to 100 times more.',
+    text: 'As the sea rises, the whole beach profile shifts up and landward to keep its shape. Each millimetre of rise moves the shoreline back by \\(W_*/(h_*+B)\\) millimetres, often 50 to 100 times more.',
     live: [['Rise rate', 'slrr'], ['Retreat', 'slrret'], ['Total rise', 'eta']], lock: 'Raise the sea level' }
 ];
 const COLVAR = { blue: 'var(--blue)', orange: 'var(--orange)', purple: 'var(--purple)', slate: 'var(--slate)', green: 'var(--green)', amber: 'var(--amber)', teal: 'var(--teal)' };
@@ -808,7 +816,7 @@ function renderMaster(tex) {
     MathJax.tex2svgPromise(tex, { display: true }).then(node => { if (masterSrc === tex) { el.innerHTML = ''; el.appendChild(node); } }).catch(() => { el.innerHTML = '<div class="tex-fallback"></div>'; el.firstChild.textContent = tex; });
   } else { el.innerHTML = '<div class="tex-fallback">Loading equations…</div>'; }
 }
-window.__mjReady = () => { renderMaster(masterSrc); typeset([$('terms'), document.querySelector('.math-head')]); };
+window.__mjReady = () => { renderMaster(masterSrc); typeset([$('terms'), document.querySelector('.math-head'), document.querySelector('.glossary')]); };
 
 function updateLive() {
   const w = W || currentWaves(), Dd = Dact(), A = Aprof();
@@ -883,7 +891,7 @@ function frame(now) {
 
 // ---------- init ----------
 h0.value = 1; per.value = 8.5; slr.value = S.slr; vol.value = S.vol; k1.value = S.K1; d50.value = S.d50; hsIn.value = S.hstar;
-setTool('inspect'); setMode('cycle'); setSpeed(0.5); setPlaying(false);
+setTool('inspect'); setMode('cycle'); setSpeed(SP_MIN); setPlaying(false);
 resize(); window.addEventListener('resize', () => { resize(); });
 resetBeach();
 refreshTerms(); updateReadouts(); drawChart();

@@ -62,9 +62,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .tool svg { width: 22px; height: 22px; flex: none; }
 .tool:hover { border-color: var(--accent); }
 .tool[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
-.runbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.runbar .btn { display: inline-flex; align-items: center; gap: 7px; font-weight: 700; padding: 8px 16px; }
-.runbar .btn svg { width: 14px; height: 14px; }
+.timebar { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; display: grid; gap: 10px; }
+.timebar h2 { font-size: 16px; font-weight: 600; margin-right: 4px; }
+.tb-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.timebar .go, .timebar .stop { display: inline-flex; align-items: center; gap: 7px; font-weight: 700; padding: 8px 16px; }
+.timebar .go svg, .timebar .stop svg { width: 14px; height: 14px; }
+.tb-label { font-size: 13.5px; min-width: 44px; }
+#speed { flex: 1 1 200px; min-width: 0; }
+#speedo { font-size: 13px; min-width: 150px; text-align: right; }
+.timebar .btns .btn { font-size: 13px; padding: 5px 10px; }
 .btn.go { background: var(--green); border-color: var(--green); color: #fff; }
 .btn.stop { background: var(--panel); }
 .run-status { font-size: 13.5px; color: var(--muted); }
@@ -169,7 +175,7 @@ details.adv[open] summary { margin-bottom: 8px; }
 .locked span b { color: var(--c); }
 .glossary summary { cursor: pointer; font-weight: 700; font-size: 14px; }
 .glossary dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 13px; margin: 8px 0 0; }
-.glossary dt { font-family: var(--mono); }
+.glossary dt { white-space: nowrap; }
 .glossary dd { margin: 0; color: var(--muted); }
 .tex-fallback { font-family: var(--mono); font-size: 12px; color: var(--muted); white-space: pre-wrap; }
 
