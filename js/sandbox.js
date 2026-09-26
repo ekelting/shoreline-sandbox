@@ -164,7 +164,14 @@ function step(dt, w) {
   }
   const c = dt / (Dd * DX);
   for (let i = 0; i < N; i++) S.yls[i] -= c * (Q[i + 1] - Q[i]);
-  for (const s of S.structures) if (s.type === 'river') S.yls[s.cell] += s.q * c;
+  // rivers: sand is delivered to the beach on both sides of the mouth; a river mouth held
+  // between jetties sends its sand out past the jetties instead (it never reaches the beach)
+  for (const s of S.structures) if (s.type === 'river') {
+    const ch = riverCells(s);
+    if (ch.jettied) continue;
+    const band = 6, per = s.q * c / (2 * band);
+    for (let k = 1; k <= band; k++) { if (ch.i1 - k >= 0) S.yls[ch.i1 - k] += per; if (ch.i2 + k < N) S.yls[ch.i2 + k] += per; }
+  }
   if (S.slr > 0) {
     const R = S.slr * 1e-3 * Wstar() / Dd * dt;
     for (let i = 0; i < N; i++) S.yls[i] -= R;
@@ -182,6 +189,11 @@ function step(dt, w) {
       const i1 = Math.max(0, Math.floor(s.x1 / DX)), i2 = Math.min(N - 1, Math.floor(s.x2 / DX));
       for (let i = i1; i <= i2; i++) if (S.yls[i] + S.ycs[i] > s.y - 4) S.yls[i] = s.y - 4 - S.ycs[i];
     }
+  }
+  // the river keeps its mouth open: the shoreline across the channel can't build out past the banks
+  for (const s of S.structures) if (s.type === 'river') {
+    const ch = riverCells(s), cap = Y0 + 20; // the mouth can build out a little, but the river flushes anything more
+    for (let i = ch.i1; i <= ch.i2; i++) if (S.yls[i] + S.ycs[i] > cap) S.yls[i] = cap - S.ycs[i];
   }
   for (let i = 0; i < N; i++) if (S.yls[i] + S.ycs[i] < 8) S.yls[i] = 8 - S.ycs[i];
   S.t += dt;
@@ -504,37 +516,163 @@ function updateCritters(dt, t) {
   }
   S.critters = S.critters.filter(c => !c.dead && !(c.kind === 'crab' && (c.life <= 0 || stormy)));
 }
+// ---------- hand-drawn sprites (top-down, same flat style as the structures and cars) ----------
+// every sprite is drawn facing +x around (0,0); spr() flips it when it moves left
+function spr(X, Y, dir, fn, alpha) {
+  ctx.save(); if (alpha != null) ctx.globalAlpha = alpha; ctx.translate(px(X), py(Y)); if (dir < 0) ctx.scale(-1, 1); fn(); ctx.restore();
+}
+const ell = (x, y, rx, ry, rot, fill) => { ctx.fillStyle = fill; ctx.beginPath(); ctx.ellipse(x, y, rx, ry, rot || 0, 0, 7); ctx.fill(); };
+function wake(k, len, spread) {
+  ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.moveTo(-len * 0.35 * k, -2 * k); ctx.lineTo(-len * k, -spread * k); ctx.moveTo(-len * 0.35 * k, 2 * k); ctx.lineTo(-len * k, spread * k); ctx.stroke();
+}
+function sprLobsterBoat(k, t) {
+  wake(k, 34, 8);
+  ctx.fillStyle = '#f4f1ea'; ctx.strokeStyle = '#2b3a44'; ctx.lineWidth = 0.9;
+  ctx.beginPath(); ctx.moveTo(15 * k, 0); ctx.quadraticCurveTo(8 * k, -5.2 * k, -9 * k, -5 * k); ctx.lineTo(-12 * k, -4.4 * k); ctx.lineTo(-12 * k, 4.4 * k); ctx.lineTo(-9 * k, 5 * k); ctx.quadraticCurveTo(8 * k, 5.2 * k, 15 * k, 0); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#b8413a'; ctx.fillRect(-12 * k, -4.4 * k, 1.4 * k, 8.8 * k);                 // red transom
+  ctx.fillStyle = '#3c6e91'; ctx.fillRect(-1 * k, -3.2 * k, 7 * k, 6.4 * k);                    // wheelhouse roof
+  ctx.fillStyle = '#a9d6ee'; ctx.fillRect(5 * k, -3.2 * k, 1.4 * k, 6.4 * k);                   // windshield
+  ctx.fillStyle = '#e8a33a'; ctx.fillRect(-9.5 * k, -3.6 * k, 3.2 * k, 3 * k); ctx.fillStyle = '#e0c24a'; ctx.fillRect(-9.5 * k, 0.6 * k, 3.2 * k, 3 * k); // lobster traps
+}
+function sprSailboat(k, t) {
+  wake(k, 26, 6);
+  ctx.fillStyle = '#ffffff'; ctx.strokeStyle = '#2b3a44'; ctx.lineWidth = 0.9;
+  ctx.beginPath(); ctx.moveTo(13 * k, 0); ctx.quadraticCurveTo(4 * k, -4 * k, -10 * k, -3.2 * k); ctx.lineTo(-10 * k, 3.2 * k); ctx.quadraticCurveTo(4 * k, 4 * k, 13 * k, 0); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#c7d6de'; ctx.fillRect(-9 * k, -1.6 * k, 4 * k, 3.2 * k);                   // cockpit
+  const luff = Math.sin(t * 1.5) * 0.6;
+  ctx.fillStyle = '#fffaf0'; ctx.strokeStyle = 'rgba(40,60,70,0.7)';
+  ctx.beginPath(); ctx.moveTo(3 * k, 0); ctx.quadraticCurveTo(-2 * k, (6 + luff) * k, -9 * k, 7.5 * k); ctx.lineTo(-9 * k, 6.3 * k); ctx.lineTo(3 * k, 0); ctx.fill(); ctx.stroke(); // mainsail (boom out to one side)
+  ell(3 * k, 0, 1 * k, 1 * k, 0, '#2b3a44');                                                    // mast
+}
+function sprGull(k, t) {
+  const f = Math.sin(t * 9), span = (8 + 2.5 * f) * k;
+  ell(6 * k, 9 * k, 5 * k, 2 * k, 0, 'rgba(0,0,0,0.12)');                                       // shadow on the water
+  ctx.fillStyle = '#d7dde1'; ctx.strokeStyle = '#6a737a'; ctx.lineWidth = 0.6;
+  for (const sgn of [-1, 1]) { ctx.beginPath(); ctx.moveTo(1.5 * k, 0); ctx.quadraticCurveTo(0, sgn * span * 0.6, -3 * k, sgn * span); ctx.lineTo(-4.5 * k, sgn * span * 0.9); ctx.quadraticCurveTo(-2 * k, sgn * span * 0.4, -2 * k, 0); ctx.fill(); ctx.stroke();
+    ell(-3.6 * k, sgn * span * 0.93, 1.3 * k, 0.8 * k, 0, '#222'); }                            // black wingtips
+  ell(0, 0, 4.5 * k, 1.6 * k, 0, '#ffffff'); ell(4.3 * k, 0, 1.5 * k, 1.3 * k, 0, '#ffffff');
+  ctx.fillStyle = '#e8a22b'; ctx.beginPath(); ctx.moveTo(5.6 * k, -0.4 * k); ctx.lineTo(7.4 * k, 0); ctx.lineTo(5.6 * k, 0.4 * k); ctx.fill();
+}
+function sprFish(k, t, col) {
+  const w = Math.sin(t * 8) * 0.25;
+  ctx.fillStyle = col; ctx.beginPath(); ctx.ellipse(0, 0, 5 * k, 1.7 * k, 0, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(-4 * k, 0); ctx.lineTo(-7.5 * k, (-2 + w * 4) * k); ctx.lineTo(-7.5 * k, (2 + w * 4) * k); ctx.fill();
+}
+function sprShark(k, t) {
+  const w = Math.sin(t * 3) * 0.2, sil = 'rgba(12, 32, 48, 0.5)';
+  ctx.fillStyle = sil; ctx.beginPath(); ctx.ellipse(0, 0, 14 * k, 3.4 * k, 0, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(3 * k, 2 * k); ctx.lineTo(-2 * k, 7 * k); ctx.lineTo(-1 * k, 2 * k); ctx.moveTo(3 * k, -2 * k); ctx.lineTo(-2 * k, -7 * k); ctx.lineTo(-1 * k, -2 * k); ctx.fill(); // pectoral fins
+  ctx.beginPath(); ctx.moveTo(-12 * k, 0); ctx.lineTo(-19 * k, (-5 + w * 10) * k); ctx.lineTo(-17 * k, (w * 10) * k); ctx.lineTo(-19 * k, (4 + w * 10) * k); ctx.fill(); // tail
+  ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(1 * k, 0, 4.2 * k, 2.2, 4.1); ctx.stroke(); // ripple round the fin
+  ctx.fillStyle = '#56646d'; ctx.beginPath(); ctx.moveTo(3.5 * k, 0); ctx.lineTo(-3 * k, -1.6 * k); ctx.lineTo(-2 * k, 1.2 * k); ctx.fill(); // dorsal fin
+}
+function sprWhale(k, t) {
+  const sil = 'rgba(10, 24, 38, 0.55)', w = Math.sin(t * 1.2) * 0.15;
+  ctx.fillStyle = sil; ctx.beginPath(); ctx.ellipse(0, 0, 26 * k, 7 * k, 0, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(-24 * k, 0); ctx.quadraticCurveTo(-32 * k, (-9 + w * 20) * k, -36 * k, (-8 + w * 20) * k); ctx.quadraticCurveTo(-31 * k, (w * 20) * k, -36 * k, (8 + w * 20) * k); ctx.quadraticCurveTo(-32 * k, (9 + w * 20) * k, -24 * k, 0); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(4 * k, 8 * k, 8 * k, 2 * k, 0.5, 0, 7); ctx.ellipse(4 * k, -8 * k, 8 * k, 2 * k, -0.5, 0, 7); ctx.fill(); // flippers
+  const ph = (t * 0.35) % 1;                                                                    // blow every few seconds
+  if (ph < 0.18) { const r = ph / 0.18; ctx.fillStyle = `rgba(255,255,255,${0.8 * (1 - r)})`; for (const [dx, dy, rr] of [[0, 0, 3], [-2, -3, 2.4], [-2, 3, 2.4], [-4, 0, 2]]) { ctx.beginPath(); ctx.arc((18 + dx - r * 4) * k, dy * k * (1 + r), rr * k * (1 + r * 1.5), 0, 7); ctx.fill(); } }
+}
+function sprCrab(k, t, moving) {
+  const wig = moving ? Math.sin(t * 30) * 0.6 : 0;
+  ell(1 * k, 1.2 * k, 4.5 * k, 3.2 * k, 0, 'rgba(0,0,0,0.12)');
+  ctx.strokeStyle = '#b8401d'; ctx.lineWidth = 1.1 * Math.max(0.8, k);
+  for (let i = 0; i < 3; i++) for (const sgn of [-1, 1]) {
+    const bx = (-2 + i * 2) * k, by = sgn * 2.2 * k;
+    ctx.beginPath(); ctx.moveTo(bx, by * 0.6); ctx.lineTo(bx + (i - 1 + (i % 2 ? wig : -wig)) * 1.5 * k, by + sgn * 2.6 * k); ctx.stroke(); // legs out to each side
+  }
+  ell(0, 0, 3.6 * k, 2.6 * k, 0, '#d9542c'); ell(-0.4 * k, -0.4 * k, 2.4 * k, 1.5 * k, 0, '#e8764a');
+  for (const sgn of [-1, 1]) { ctx.beginPath(); ctx.moveTo(sgn * 1.8 * k, -2 * k); ctx.lineTo(sgn * 3 * k, -4 * k); ctx.stroke(); ell(sgn * 3.2 * k, -4.8 * k, 1.5 * k, 1.1 * k, sgn * 0.5, '#c94a24'); } // claws toward the sea
+  ell(-1 * k, -2.3 * k, 0.45 * k, 0.45 * k, 0, '#111'); ell(1 * k, -2.3 * k, 0.45 * k, 0.45 * k, 0, '#111');
+}
+function sprLobster(k, t) {
+  const tw = Math.sin(t * 2) * 0.3;
+  ctx.strokeStyle = '#6b4a2a'; ctx.lineWidth = 0.7;
+  ctx.beginPath(); ctx.moveTo(4 * k, -0.6 * k); ctx.quadraticCurveTo(9 * k, (-4 + tw) * k, 13 * k, (-5 + tw) * k); ctx.moveTo(4 * k, 0.6 * k); ctx.quadraticCurveTo(9 * k, (4 - tw) * k, 13 * k, (5 - tw) * k); ctx.stroke(); // antennae
+  for (let i = 0; i < 5; i++) ell((-2.5 - i * 1.7) * k, 0, (1.6 - i * 0.12) * k, (1.9 - i * 0.2) * k, 0, i % 2 ? '#3f3a22' : '#4d4528'); // tail segments
+  ctx.fillStyle = '#4d4528'; ctx.beginPath(); ctx.moveTo(-10.5 * k, 0); ctx.lineTo(-13 * k, -2.2 * k); ctx.lineTo(-13 * k, 2.2 * k); ctx.fill(); // tail fan
+  ell(1 * k, 0, 3.4 * k, 2 * k, 0, '#4a4226');                                                  // carapace
+  for (const sgn of [-1, 1]) { ctx.strokeStyle = '#4a4226'; ctx.lineWidth = 1.2 * k; ctx.beginPath(); ctx.moveTo(3 * k, sgn * 1.2 * k); ctx.lineTo(5.5 * k, sgn * 3.2 * k); ctx.stroke();
+    ell(7.5 * k, sgn * 3.6 * k, 2.6 * k, (sgn > 0 ? 1.4 : 1.1) * k, sgn * 0.25, '#3f3a22'); ell(9.3 * k, sgn * 3.9 * k, 0.9 * k, 0.6 * k, 0, '#9a4a22'); } // big claws, rusty tips
+}
+function sprSeal(k, t) {
+  const bob = Math.sin(t * 0.8) * 0.3;
+  ell(1 * k, 1.5 * k, 10 * k, 3.6 * k, 0, 'rgba(0,0,0,0.15)');
+  ell(0, 0, 9 * k, 3.4 * k, bob * 0.1, '#6f6863');
+  ctx.fillStyle = 'rgba(40,36,34,0.35)'; for (const [x, y] of [[-3, -1], [1, 1.2], [-6, 0.8], [3, -1.4]]) { ctx.beginPath(); ctx.arc(x * k, y * k, 0.6 * k, 0, 7); ctx.fill(); } // spots
+  ell(-9.5 * k, -1.4 * k, 2.2 * k, 0.9 * k, -0.5, '#5f5853'); ell(-9.5 * k, 1.4 * k, 2.2 * k, 0.9 * k, 0.5, '#5f5853'); // rear flippers
+  ell(2 * k, -3.4 * k, 2 * k, 0.8 * k, -0.6, '#5f5853'); ell(2 * k, 3.4 * k, 2 * k, 0.8 * k, 0.6, '#5f5853');       // fore flippers
+  ell(8.5 * k, bob * k, 2.8 * k, 2.4 * k, 0, '#655e59');                                         // head
+  ell(9.6 * k, (bob - 0.9) * k, 0.45 * k, 0.45 * k, 0, '#111'); ell(9.6 * k, (bob + 0.9) * k, 0.45 * k, 0.45 * k, 0, '#111');
+  ell(11.1 * k, bob * k, 0.5 * k, 0.5 * k, 0, '#222');                                           // nose
+}
+function sprShell(kind, k, rot) {
+  ctx.rotate(rot);
+  if (kind === 0) { // scallop
+    ctx.fillStyle = '#f2e3cf'; ctx.beginPath(); ctx.moveTo(0, 1.6 * k); ctx.arc(0, 1.6 * k, 3 * k, Math.PI * 1.15, Math.PI * 1.85); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#c9a987'; ctx.lineWidth = 0.5; for (let i = -2; i <= 2; i++) { ctx.beginPath(); ctx.moveTo(0, 1.6 * k); ctx.lineTo(i * 1.1 * k, -1.2 * k); ctx.stroke(); }
+  } else if (kind === 1) { // moon snail
+    ell(0, 0, 2 * k, 2 * k, 0, '#e8dac4'); ctx.strokeStyle = '#8a6d52'; ctx.lineWidth = 0.6;
+    ctx.beginPath(); for (let a = 0; a < 9; a += 0.3) { const r = 0.2 * k + a * 0.2 * k; ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r); } ctx.stroke();
+  } else { // blue mussel
+    ell(0, 0, 2.8 * k, 1.2 * k, 0, '#26303c'); ell(-0.5 * k, -0.3 * k, 1.6 * k, 0.4 * k, 0, '#5d7494');
+  }
+}
+function sprUmbrella(k, palette) {
+  ell(3 * k, 3 * k, 8 * k, 8 * k, 0, 'rgba(0,0,0,0.13)');                                        // shade
+  ctx.save(); ctx.translate(10 * k, 5 * k); ctx.rotate(0.3); ctx.fillStyle = palette[2]; ctx.fillRect(-2.5 * k, -5 * k, 5 * k, 10 * k);
+  ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.fillRect(-2.5 * k, -2 * k, 5 * k, 1.2 * k); ctx.fillRect(-2.5 * k, 1.5 * k, 5 * k, 1.2 * k); ctx.restore(); // towel
+  for (let i = 0; i < 8; i++) { ctx.fillStyle = palette[i % 2]; ctx.beginPath(); ctx.moveTo(0, 0); ctx.arc(0, 0, 7 * k, i * Math.PI / 4, (i + 1) * Math.PI / 4); ctx.closePath(); ctx.fill(); }
+  ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 0.6; ctx.beginPath(); ctx.arc(0, 0, 7 * k, 0, 7); ctx.stroke();
+  ell(0, 0, 0.9 * k, 0.9 * k, 0, '#444');
+}
+function sprBuoy(k, t, c1, c2) {
+  const b = Math.sin(t * 2) * 0.4;
+  ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.arc(0, 0, (3.4 + b) * k, 0, 7); ctx.stroke();
+  ell(0, 0, 2.2 * k, 2.2 * k, 0, c1); ell(0, 0, 1.2 * k, 1.2 * k, 0, c2); ell(0, 0, 0.5 * k, 0.5 * k, 0, '#222');
+}
+const UMBRELLA_COLORS = [['#e04b3f', '#ffffff', '#3b82c4'], ['#2f78d6', '#f5d34a', '#e07a3a'], ['#1fa37a', '#ffffff', '#f0a1b8'], ['#f08a24', '#fff3d6', '#5e8bd6']];
 function drawFun(time) {
-  const m = Math.floor(monthPos()), summer = m >= 5 && m <= 7, big = clamp(sc * 22, 12, 26), stormy = W && W.sf > 0.1;
+  const m = Math.floor(monthPos()), summer = m >= 5 && m <= 7, stormy = W && W.sf > 0.1, k = clamp(sc * 1.7, 1, 2.3);
   const onRiver = X => S.structures.some(r => r.type === 'river' && Math.abs(X - r.x) < r.w / 2 + 25);
   // shells along the wrack line
   for (const sh of SHELLS) {
     const X = 20 + sh.u * (XL - 40), wid = shoreAt(X) - DUNE_TOE;
     if (wid < 12 || onRiver(X)) continue;
     const Y = DUNE_TOE + wid * (0.6 + 0.3 * sh.f);
-    if (sh.k < 0.45) emojiAt('🐚', X, Y, big * 0.42, sh.k < 0.22);
-    else { ctx.fillStyle = sh.k < 0.75 ? '#f6efe3' : '#d9b99b'; ctx.beginPath(); ctx.ellipse(px(X), py(Y), Math.max(1.5, 2.2 * sc), Math.max(1.1, 1.6 * sc), sh.k * 6, 0, 7); ctx.fill(); }
+    ctx.save(); ctx.translate(px(X), py(Y)); sprShell(Math.floor(sh.k * 3), k * 0.9, sh.f * 6); ctx.restore();
   }
   if (summer && !stormy) {
     const rr = seeded(42);
     for (let i = 0; i < 9; i++) {
       const X = 60 + rr() * (XL - 120), wid = shoreAt(X) - DUNE_TOE, onWall = S.structures.some(s => s.type === 'seawall' && X >= s.x1 && X <= s.x2);
       const nearNest = S.nests.some(n => Math.abs(n.x - X) < 30 + 16 * n.pairs), Yf = 0.45 + rr() * 0.2;
-      if (wid > 45 && !onWall && !nearNest && !onRiver(X)) emojiAt(i % 3 === 2 ? '🏐' : '⛱️', X, DUNE_TOE + wid * Yf, i % 3 === 2 ? big * 0.6 : big);
+      if (wid > 45 && !onWall && !nearNest && !onRiver(X)) spr(X, DUNE_TOE + wid * Yf, 1, () => sprUmbrella(k, UMBRELLA_COLORS[i % 4]));
     }
   }
-  // lobsters on the rocks at the ends of the jetties, seals hauled out on breakwaters
+  // lobsters on the jetty rocks, lobster buoys off the tips, seals hauled out on breakwaters
   for (const s of S.structures) {
-    if (s.type === 'jetty' || (isStem(s) && s.tip - shoreAt(s.x) > 120)) emojiAt('🦞', s.x + 14, s.tip - 18 + 3 * Math.sin(time * 2 + s.x), big * 0.55, false, 0.9);
-    if (s.type === 'breakwater') emojiAt('🦭', (s.x1 + s.x2) / 2 + 20 * Math.sin(time * 0.3), s.y + 12, big * 0.8);
+    if (s.type === 'jetty' || (isStem(s) && s.tip - shoreAt(s.x) > 120)) {
+      spr(s.x + 9, s.tip - 22, 1, () => { ctx.rotate(-1.2); sprLobster(k * 0.8, time); }, 0.95);
+      if (s.tip < YL - 30) { spr(s.x + 30, s.tip + 12, 1, () => sprBuoy(k, time, '#e04b3f', '#f5d34a')); spr(s.x - 26, s.tip + 22, 1, () => sprBuoy(k, time + 1, '#2f78d6', '#ffffff')); }
+    }
+    if (s.type === 'breakwater') spr((s.x1 + s.x2) / 2 + 15 * Math.sin(time * 0.2), s.y + 3, 1, () => sprSeal(k, time));
   }
   const m5 = m >= 4 && m <= 8;
   for (const c of S.critters) {
     if ((c.kind === 'boat' || c.kind === 'sail') && stormy) continue;
     if (c.kind === 'sail' && !m5) continue;
-    if (c.kind === 'crab') { emojiAt('🦀', c.x, shoreAt(c.x) - c.off, big * c.size, false, Math.min(1, c.life)); continue; }
-    const y = c.kind === 'gull' ? c.y + 18 * Math.sin(time * 1.7) : c.kind === 'whale' || c.kind === 'boat' || c.kind === 'sail' ? c.y + 2 * Math.sin(time * 1.3 + c.x * 0.01) : c.y;
-    emojiAt(c.e, c.x, y, big * c.size, c.vx > 0, c.kind === 'fish' ? 0.75 : 1);
+    const dir = c.vx > 0 ? 1 : -1;
+    if (c.kind === 'crab') { const moving = Math.sin(time * 7 + c.x) > -0.2; spr(c.x, shoreAt(c.x) - c.off, 1, () => sprCrab(k * 0.9, time, moving), Math.min(1, c.life)); continue; }
+    const y = c.kind === 'gull' ? c.y + 18 * Math.sin(time * 1.7) : c.y;
+    if (c.kind === 'boat') spr(c.x, y, dir, () => sprLobsterBoat(k, time));
+    else if (c.kind === 'sail') spr(c.x, y, dir, () => sprSailboat(k * 1.1, time));
+    else if (c.kind === 'gull') spr(c.x, y, dir, () => sprGull(k, time));
+    else if (c.kind === 'fish') spr(c.x, y, dir, () => { for (const [dx, dy] of [[0, 0], [-9, 4], [-7, -5]]) { ctx.save(); ctx.translate(dx * k, dy * k); sprFish(k * c.size * 1.4, time + dx, 'rgba(14, 44, 64, 0.42)'); ctx.restore(); } });
+    else if (c.kind === 'shark') spr(c.x, y, dir, () => sprShark(k, time));
+    else if (c.kind === 'whale') spr(c.x, y, dir, () => sprWhale(k, time));
   }
 }
 // ---------- cars on the road (top-down, driving on the right) ----------
@@ -571,10 +709,15 @@ function drawCars() {
     ctx.restore();
   }
 }
+function riverCells(s) {
+  const i1 = clamp(Math.floor((s.x - s.w / 2) / DX), 0, N - 1), i2 = clamp(Math.floor((s.x + s.w / 2) / DX), 0, N - 1);
+  const jettied = S.structures.some(j => j.type === 'jetty' && Math.abs(j.x - s.x) < s.w / 2 + 120);
+  return { i1, i2, jettied };
+}
 function drawRiver(s, time) {
   const sy = shoreAt(s.x), hw = s.w / 2, bank = hw + 40;
   // salt marsh banks where the houses and dune would be
-  ctx.fillStyle = '#8eab6b'; ctx.fillRect(px(s.x - bank), py(DUNE_TOE + 4), px(2 * bank), (DUNE_TOE + 4) * sc);
+  ctx.fillStyle = '#8eab6b'; ctx.fillRect(px(s.x - bank), py(DUNE_TOE), px(2 * bank), (DUNE_TOE - 12) * sc); // from the road up to the dune line
   const rr = seeded(Math.round(s.x) + 3); ctx.strokeStyle = 'rgba(60, 90, 45, 0.6)'; ctx.lineWidth = 1;
   for (let i = 0; i < 40 + s.w / 2; i++) { const X = s.x - bank + rr() * 2 * bank, Y = 14 + rr() * (DUNE_TOE - 14); ctx.beginPath(); ctx.moveTo(px(X), py(Y)); ctx.lineTo(px(X - 1), py(Y + 5)); ctx.moveTo(px(X), py(Y)); ctx.lineTo(px(X + 2), py(Y + 5)); ctx.stroke(); }
   // sandy river banks on the beach
@@ -590,11 +733,13 @@ function drawRiver(s, time) {
   ctx.beginPath(); for (let i = 0; i <= pts; i++) { const Y = sy * i / pts; const X = s.x + wig(Y) * (1 - i / pts); i ? ctx.lineTo(px(X), py(Y)) : ctx.moveTo(px(X), CH); } ctx.stroke();
   ctx.setLineDash([]); ctx.lineDashOffset = 0;
   // bridge carrying the road over the river
-  const bx1 = px(s.x - hw - 14), bx2 = px(s.x + hw + 14);
-  ctx.fillStyle = '#6f757b'; ctx.fillRect(bx1, py(12), bx2 - bx1, 12 * sc);
-  ctx.fillStyle = '#c9c4b8'; ctx.fillRect(bx1, py(13.5), bx2 - bx1, Math.max(1.5, 1.5 * sc)); ctx.fillRect(bx1, py(0.5), bx2 - bx1, Math.max(1.5, 1.5 * sc));
+  // the road continues straight across: pavement over the whole marsh, railings over the water
+  const rx1 = px(s.x - bank), rx2 = px(s.x + bank), bx1 = px(s.x - hw - 12), bx2 = px(s.x + hw + 12);
+  ctx.fillStyle = '#6f757b'; ctx.fillRect(rx1, py(12), rx2 - rx1, 12 * sc);
+  ctx.fillStyle = '#c9c4b8'; ctx.fillRect(bx1, py(12.8), bx2 - bx1, Math.max(1.5, 1.2 * sc)); ctx.fillRect(bx1, py(0.4) - Math.max(1.5, 1.2 * sc), bx2 - bx1, Math.max(1.5, 1.2 * sc));
   ctx.strokeStyle = 'rgba(255, 230, 140, 0.8)'; ctx.setLineDash([8, 8]); ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(bx1, py(6)); ctx.lineTo(bx2, py(6)); ctx.stroke(); ctx.setLineDash([]);
+  ctx.lineDashOffset = rx1; // keep the centre-line dashes in step with the rest of the road
+  ctx.beginPath(); ctx.moveTo(rx1, py(6)); ctx.lineTo(rx2, py(6)); ctx.stroke(); ctx.setLineDash([]); ctx.lineDashOffset = 0;
 }
 function drawDraft() {
   const d = draft; ctx.globalAlpha = 0.75;

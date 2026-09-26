@@ -13,12 +13,12 @@ You can also download this repository and open `index.html` in any modern browse
 ## How to use it
 
 1. **Pick a place.** Start from the generic beach, or load a Maine beach (Camp Ellis, Camp Ellis with the new spur jetty, Old Orchard Beach, Pine Point, Wells Beach, Kennebunk Beach, Ogunquit Beach, Popham Beach). Each one loads that beach's main structures, which way it faces, and its wave and sand settings.
-2. **Build.** Pick a tool from the Build column beside the beach (Groin, T-groin / spur, Jetty, Breakwater, Seawall, Add sand, River, Nesting area, Rebuild house) and click the water or the beach. Drag to set a groin's length or a breakwater's or seawall's extent. Use **Remove** or **Undo last** to take things away. Set the size of sand fills and the width of new rivers (wider rivers bring more sand) with the sliders under the tools. Houses that wash away leave empty lots; rebuild them with **Rebuild house** or **Rebuild all houses** once there is at least 20 m of beach again.
+2. **Build.** Pick a tool from the Build box above the beach (Groin, T-groin / spur, Jetty, Breakwater, Seawall, Add sand, River, Nesting area, Rebuild house) and click the water or the beach. Drag to set a groin's length or a breakwater's or seawall's extent. Use **Remove** or **Undo last** to take things away. Set the size of sand fills and the width of new rivers (wider rivers bring more sand) with the sliders under the tools. Houses that wash away leave empty lots; rebuild them with **Rebuild house** or **Rebuild all houses** once there is at least 20 m of beach again.
 3. **Set the waves.** Choose *Year-round* (waves change month by month) or hold one season, or drag the direction dial and the height and period sliders for custom waves.
 4. **Run time.** Press **Start model**, and use the **Speed** slider to go from 1 year every 30 seconds up to 2 years per second. **Pause model** freezes the beach; the waves keep moving.
 5. **Add weather.** Send a nor'easter or a tropical storm (the sim slows to about a day per second so you can watch), or raise the sea-level-rise slider.
 6. **Read the results.** The chart shows how far the shoreline has moved at each point, the tiles count houses at risk and safe shorebird nesting areas (with chicks fledged each season), and **Look** mode shows beach width and sand drift wherever you hover.
-7. **Enjoy the extras.** Pop-up messages announce storms, houses at risk, nesting seasons and tombolos, beach umbrellas appear in summer, crabs scuttle across the sand, cars drive along the road (and U-turn where the sea has washed it out), fish, boats, a seal, lobsters and the odd shark or whale share the water, and the ☀️ / 🌙 / 🖥️ buttons at the top switch between light, dark and automatic themes.
+7. **Enjoy the extras.** Pop-up messages announce storms, houses at risk, nesting seasons and tombolos, beach umbrellas appear in summer, crabs scuttle across the sand, cars drive along the road (and U-turn where the sea has washed it out), lobster boats, sailboats, gulls, schools of fish, a seal, lobsters, lobster buoys and the odd shark or whale share the water (all hand-drawn in the same top-down style as the structures), and the ☀️ / 🌙 / 🖥️ buttons at the top switch between light, dark and automatic themes.
 8. **Read the math.** The panel on the right shows the equation being solved. Each structure or process you add puts a new, coloured term into it, with a plain-language explanation and live values.
 
 Not sure where to start? Try the four ready-made experiments: a groin field, a river-mouth jetty, a breakwater salient and a seawall squeeze.
@@ -57,6 +57,8 @@ $$Q(x_g) = \mathrm{BYP}\,Q, \qquad \mathrm{BYP} = 1 - \frac{y_G}{y_B}, \qquad y_
 where $A = 0.21\,d_{50}^{0.48}$ is the Dean profile parameter. Groins also shelter their lee side from oblique waves (Bakker 1968; Bakker et al. 1970).
 
 **Breakwaters:** $H_b \to K_d H_b$ in the geometric shadow, with smooth diffraction edges; a shoreline that reaches the breakwater forms a tombolo.
+
+**Rivers:** a river delivers sand to the beach on both sides of its mouth, and keeps its mouth open (the shoreline across the channel can build out at most 20 m). A river mouth held between jetties sends its sand out past the jetties instead, so it never reaches the beach.
 
 **Seawalls:** $y(x,t) \ge y_w$, enforced by limiting outgoing transport (so the beach in front can disappear).
 

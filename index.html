@@ -30,7 +30,8 @@
     </div>
   </header>
 
-  <section class="timebar" aria-labelledby="hTime">
+  <div class="toprow">
+    <section class="timebar" aria-labelledby="hTime">
         <div class="tb-row">
           <h2 id="hTime">⏱️ Time</h2>
           <button class="btn go" id="btnStart" type="button"><svg viewBox="0 0 14 14" aria-hidden="true"><path d="M3 1.5v11l9-5.5z" fill="currentColor"/></svg>Start model</button>
@@ -48,6 +49,19 @@
           <button class="btn" id="btnReset" type="button">🔄 Reset beach and clock</button>
         </div>
       </section>
+    <section class="toolcol" aria-labelledby="hTools">
+      <h2 id="hTools">🧰 Build</h2>
+      <div class="toolbar" role="toolbar" aria-label="Tools" id="toolbar"></div>
+      <div class="tool-extras">
+        <div class="tsl-wrap"><label class="tsl" for="vol">🚚 Sand fill size <output id="volo" for="vol"></output></label>
+        <input type="range" id="vol" min="50000" max="500000" step="25000"></div>
+        <div class="tsl-wrap"><label class="tsl" for="rw">🏞️ River width <output id="rwo" for="rw"></output></label>
+        <input type="range" id="rw" min="20" max="200" step="5"></div>
+        <button class="btn" id="btnRebuild" type="button">🔨 Rebuild all houses</button>
+      </div>
+      <div class="tool-hint" id="toolHint"></div>
+    </section>
+  </div>
 
   <div class="beachrow">
     <div class="stage" id="stage" data-tool="inspect">
@@ -55,20 +69,10 @@
         <div class="ov ov-clock"><span class="pill mono" id="clock">Year 0 · Sep</span><span class="pill" id="waveTag">Year-round waves</span></div>
         <div class="ov ov-drift"><span class="pill" id="driftPill">Sand drift</span></div>
         <div class="ov ov-storm" id="stormBanner" hidden></div>
-        <div class="ov ov-hint" id="hint">🏖️ A straight, sandy beach and nothing on it yet.<br><b>Pick a tool on the right, click the water or the sand, then press Start.</b></div>
+        <div class="ov ov-hint" id="hint">🏖️ A straight, sandy beach and nothing on it yet.<br><b>Pick a tool from Build above, click the water or the sand, then press Start.</b></div>
         <div class="ov ov-tip" id="tip" hidden></div>
         <div class="ov ov-toasts" id="toasts" aria-live="polite"></div>
       </div>
-    <aside class="toolcol" aria-labelledby="hTools">
-      <h2 id="hTools">🧰 Build</h2>
-      <div class="toolbar" role="toolbar" aria-label="Tools" id="toolbar"></div>
-      <label class="tsl" for="vol">🚚 Sand fill size <output id="volo" for="vol"></output></label>
-      <input type="range" id="vol" min="50000" max="500000" step="25000">
-      <label class="tsl" for="rw">🏞️ River width <output id="rwo" for="rw"></output></label>
-      <input type="range" id="rw" min="20" max="200" step="5">
-      <button class="btn" id="btnRebuild" type="button">🔨 Rebuild all houses</button>
-      <div class="tool-hint" id="toolHint"></div>
-    </aside>
   </div>
 
   <main class="layout">
