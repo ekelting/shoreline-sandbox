@@ -323,6 +323,7 @@ function drawCrests(w, time) {
 
 // sand particles in the surf zone
 const PARTS = Array.from({ length: 240 }, (_, i) => ({ x: Math.random() * XL, f: Math.random(), j: Math.random() }));
+function scatterParticles() { for (const p of PARTS) { p.x = Math.random() * XL; p.f = Math.random(); p.j = Math.random(); } } // spread the sand grains evenly again
 function faceQ(X) { const j = clamp(Math.round(X / DX), 0, N); return Q[j]; }
 function moveParticles(dtReal) {
   const scale = S.storm ? 0.6 : clamp(Math.sqrt(S.speed / 0.5), 0.45, 2);
@@ -910,7 +911,7 @@ function eraseAt(p) {
   let bestNest = null;
   for (const n of S.nests) { const hw = 14 + 16 * n.pairs; const d = seg(n.x - hw, DUNE_TOE + 12, n.x + hw, DUNE_TOE + 12); if (d < bd) { bd = d; bestNest = n; } }
   if (bestNest) { S.nests = S.nests.filter(n => n !== bestNest); return; }
-  if (best) { S.structures = S.structures.filter(s => s !== best); refreshTerms(); }
+  if (best) { S.structures = S.structures.filter(s => s !== best); scatterParticles(); refreshTerms(); }
 }
 cv.addEventListener('pointerdown', e => {
   const p = worldFromEvent(e);
@@ -1052,8 +1053,8 @@ function setPlaying(v) {
 }
 $('btnStart').addEventListener('click', () => setPlaying(true));
 $('btnPause').addEventListener('click', () => setPlaying(false));
-$('btnUndo').addEventListener('click', () => { S.structures.pop(); refreshTerms(); });
-$('btnClear').addEventListener('click', () => { S.structures = []; refreshTerms(); });
+$('btnUndo').addEventListener('click', () => { S.structures.pop(); scatterParticles(); refreshTerms(); });
+$('btnClear').addEventListener('click', () => { S.structures = []; scatterParticles(); refreshTerms(); });
 $('btnReset').addEventListener('click', () => { resetBeach(); refreshTerms(); });
 $('btnNoreaster').addEventListener('click', () => startStorm('noreaster'));
 $('btnTropical').addEventListener('click', () => startStorm('tropical'));
@@ -1213,7 +1214,7 @@ function resetBeach() {
   W = currentWaves();
   const yeq = -W_CS * (0.068 * W.Hb) / (BERM + 1.28 * W.Hb);
   for (let i = 0; i < N; i++) { S.ycs[i] = yeq; S.yls[i] = Y0 - yeq; Hc[i] = W.Hb; }
-  Q.fill(0); totals();
+  Q.fill(0); totals(); scatterParticles();
 }
 
 // ---------- equations panel ----------
