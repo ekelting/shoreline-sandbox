@@ -323,22 +323,28 @@ function drawCrests(w, time) {
 
 // sand particles in the surf zone
 const PARTS = Array.from({ length: 240 }, (_, i) => ({ x: Math.random() * XL, f: Math.random(), j: Math.random() }));
-function scatterParticles() { for (const p of PARTS) { p.x = Math.random() * XL; p.f = Math.random(); p.j = Math.random(); } } // spread the sand grains evenly again
+const stemHalf = s => (s.type === 'headland' ? 45 : s.type === 'jetty' ? 10 : 6) + 3; // half-width of the rock, plus a small gap
+function particleFree(x) { return !S.structures.some(s => isStem(s) && Math.abs(x - s.x) < stemHalf(s)); }
+function respawn(p) { let k = 0; do { p.x = Math.random() * XL; } while (!particleFree(p.x) && ++k < 20); p.f = Math.random(); p.stuck = 0; }
+function scatterParticles() { for (const p of PARTS) { respawn(p); p.j = Math.random(); } } // spread the sand grains evenly again
 function faceQ(X) { const j = clamp(Math.round(X / DX), 0, N); return Q[j]; }
 function moveParticles(dtReal) {
   const scale = S.storm ? 0.6 : clamp(Math.sqrt(S.speed / 0.5), 0.45, 2);
   for (const p of PARTS) {
     const q = faceQ(p.x), v = Math.sign(q) * Math.min(95, 26 * Math.sqrt(Math.abs(q) / 1e5)) * scale * (0.6 + 0.8 * p.j);
-    const nx = p.x + v * dtReal;
-    let blocked = false;
+    let nx = p.x + v * dtReal, blocked = false;
     for (const s of S.structures) {
       if (!isStem(s)) continue;
-      if ((p.x < s.x && nx >= s.x) || (p.x > s.x && nx <= s.x)) {
-        const sh = shoreAt(s.x), yp = sh + 3 + p.f * (surfWidthAt(s.x) - 3);
-        if (yp < s.tip - 2) { blocked = true; break; }
-      }
+      const hw = stemHalf(s), sh = shoreAt(s.x), yp = sh + 3 + p.f * (surfWidthAt(s.x) - 3);
+      if (yp >= s.tip - 2) continue;                           // out past the tip: this grain bypasses
+      if (Math.abs(p.x - s.x) < hw) { p.x = s.x + (p.x < s.x ? -hw : hw); nx = p.x; } // never sit on the rocks
+      const face = v > 0 ? s.x - hw : s.x + hw;
+      if ((v > 0 && p.x <= face && nx > face) || (v < 0 && p.x >= face && nx < face)) { nx = face - Math.sign(v) * Math.random() * 6; blocked = true; break; }
     }
-    if (!blocked) p.x = nx;
+    p.x = nx;
+    // grains piled against a groin are carried off after a while (offshore, or around the tip), so none stay stuck forever
+    p.stuck = blocked ? (p.stuck || 0) + dtReal : 0;
+    if (p.stuck > 1.5 + 2 * p.j) respawn(p);
     p.f = clamp(p.f + (Math.random() - 0.5) * 0.05, 0, 1);
     if (p.x < 0) p.x += XL; if (p.x > XL) p.x -= XL;
   }
