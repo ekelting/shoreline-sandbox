@@ -1,10 +1,14 @@
-// Shoreline Sandbox: one-line shoreline model with groins, breakwaters, seawalls,
-// rivers, nourishment, storms, sea-level rise and shorebird nesting. See README.md.
 (() => {
 'use strict';
 // ---------- constants ----------
 const g = 9.81, GAMMA = 0.78, SM1 = 1.585, POR = 0.4, SEC = 3.156e7, BERM = 2, TANB = 0.03;
-const W_CS = 250, KE = 150, KA = 8;          // cross-shore: response width (m), erosion / recovery rates (1/yr)
+const W_CS = 250, KE = 150, KA = 8;
+const VEG_B = 0.4, VEG_G = 0.3; // dune grass: storm erosion 40% slower, recovery 30% faster
+const TIDE_P = 12.42 / (24 * 365.25);             // semidiurnal tide period, in years
+const BETA_F = 0.08, Z_TOE = 2.9, Z_CREST = 7.7;   // foreshore slope; dune toe and crest (m above mean sea level; Camp Ellis fit)
+const CS_D = 9.3e-4, RD = 0.41;                    // Larson dune-impact coefficient; dune regrowth (m/yr), both from the Camp Ellis fit
+const DUNE_W = 28;                                 // the dune runs from the houses (y = 42 m) to its toe (y = 70 m)
+          // cross-shore: response width (m), erosion / recovery rates (1/yr)
 const XL = 1500, YL = 700, DX = 10, N = XL / DX, Y0 = 180, DUNE_TOE = 70, STEM_ROOT = 52;
 const HOUSES = Array.from({ length: 15 }, (_, i) => 50 + i * 100);
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -15,14 +19,14 @@ const STORMS = {
   noreaster: { name: "Nor'easter", H0: 4.5, T: 11, th: 24, surge: 0.9, days: 3 },
   tropical:  { name: 'Tropical storm', H0: 4.0, T: 13, th: -28, surge: 0.6, days: 2 }
 };
-const COL = { groin: '#d95926', jetty: '#d95926', tgroin: '#d95926', breakwater: '#8a55c9', seawall: '#7a8790', river: '#1fa37a', fill: '#1fa37a', storm: '#c98500', slr: '#1690a0', drift: '#2f78d6' };
+const COL = { groin: '#d95926', jetty: '#d95926', tgroin: '#d95926', headland: '#6b625a', breakwater: '#8a55c9', seawall: '#7a8790', grass: '#4f8a3a', river: '#1fa37a', fill: '#1fa37a', storm: '#c98500', slr: '#1690a0', drift: '#2f78d6' };
 const START_MONTH = 8; // September
 
 // ---------- state ----------
 const S = {
   t: 0, yls: new Float64Array(N), ycs: new Float64Array(N), structures: [], fills: [], sandAdded: 0,
   storm: null, storms: 0, mode: 'cycle', H0: 1, T: 8.5, th: 0, slr: 2, eta: 0, speed: 1 / 30, playing: false,
-  K1: 0.2, d50: 0.3, hstar: 8, normal: 90, turn: 0, expo: 1, place: 'generic', show: { boats: true, birds: true, fish: true, lobsters: true, seals: true, porpoises: true, sharks: true, whales: true, crabs: true }, houses: HOUSES.map(x => ({ x, gone: false })), riverW: 60, critters: [], nests: [], fledged: 0, lastMonth: -1, vol: 200000, tool: 'inspect', nextId: 1, placed: false, lastSurge: 0
+  K1: 0.2, d50: 0.3, hstar: 8, normal: 90, turn: 0, expo: 1, place: 'generic', tideAmp: 1.3, timing: 'random', dune: new Float64Array(N), over: new Float64Array(N), floods: 0, twl: 0, rq: 42000, houses: HOUSES.map(x => ({ x, gone: false })), riverW: 60, critters: [], nests: [], fledged: 0, lastMonth: -1, vol: 200000, tool: 'inspect', nextId: 1, placed: false, lastSurge: 0
 };
 const y = new Float64Array(N), Hc = new Float64Array(N), Kd = new Float64Array(N), Q = new Float64Array(N + 1);
 let W = null; // current waves (breaking info)
@@ -65,13 +69,21 @@ function currentWaves() {
     const tau = (S.t - S.storm.t0) / S.storm.dur;
     if (tau >= 1) { S.storm = null; onStormEnd(); }
     else {
-      const d = S.storm.def; sf = Math.pow(Math.sin(Math.PI * clamp(tau, 0, 1)), 1.2);
-      const dH = d.H0 * S.expo, dth = siteTh(d.th);
-      H0 = b.H0 + (dH - b.H0) * sf; T = b.T + (d.T - b.T) * sf; th = b.th + (dth - b.th) * Math.min(1, sf * 2); surge = d.surge * sf;
+      const d = S.storm.def; sf = Math.pow(Math.sin(Math.PI * clamp(tau, 0, 1)), 2);
+      const sc2 = 1, dH = d.H0 * S.expo * sc2, dth = siteTh(d.th);
+      H0 = b.H0 + (dH - b.H0) * sf; T = b.T + (d.T - b.T) * sf; th = b.th + (dth - b.th) * Math.min(1, sf * 2); surge = d.surge * Math.pow(Math.sin(Math.PI * clamp(tau, 0, 1)), 24) * sc2; // the surge peaks sharply (about half a day), so the tide at the peak matters
     }
   }
   const w = breaking(H0, T, th); w.surge = surge; w.sf = sf; w.H0 = H0; w.thDeg = th;
+  // the tide is resolved during storms (the sim slows to a day per second); between storms it averages out
+  w.tide = S.storm ? S.tideAmp * Math.cos(2 * Math.PI * (S.t - S.storm.tHW) / TIDE_P) : S.tideAmp * 0.6;
+  w.R2 = runup(H0, T);
   return w;
+}
+// 2% exceedance wave run-up on the beach (Stockdon et al. 2006)
+function runup(H0, T) {
+  const L0 = g * T * T / (2 * Math.PI), hl = Math.sqrt(Math.max(H0, 0.01) * L0);
+  return 1.1 * (0.35 * BETA_F * hl + 0.5 * Math.sqrt(H0 * L0 * (0.563 * BETA_F * BETA_F + 0.004)));
 }
 function breaking(H0, T, thDeg) {
   const th0 = rad(thDeg), om = 2 * Math.PI / T, C0 = g / om, g5 = Math.pow(g, 0.2);
@@ -86,7 +98,7 @@ function breaking(H0, T, thDeg) {
 }
 
 // ---------- structures ----------
-const isStem = s => s.type === 'groin' || s.type === 'jetty' || s.type === 'tgroin';
+const isStem = s => s.type === 'groin' || s.type === 'jetty' || s.type === 'tgroin' || s.type === 'headland';
 function heads() {
   const out = [];
   for (const s of S.structures) {
@@ -112,7 +124,13 @@ function shelterAt(X, Y, w, hs) {
       const dxl = tn > 0 ? X - s.x : s.x - X;
       if (dxl <= 0) continue;
       const yint = Y + dxl / at, r = Math.hypot(dxl, s.tip - Y), wd = 0.3 * Math.sqrt(L * r) + 12;
-      K *= 1 - 0.5 * sig((s.tip - yint) / wd) * sig(dxl / 15 - 1);
+      K *= 1 - (s.type === 'headland' ? 0.8 : 0.5) * sig((s.tip - yint) / wd) * sig(dxl / 15 - 1);
+    }
+    // long jetties and headlands reflect waves back onto the beach on their updrift side (e.g. Camp Ellis, MGS)
+    for (const s of S.structures) {
+      if (!(s.type === 'jetty' || s.type === 'headland') || Y >= s.tip) continue;
+      const dxu = tn > 0 ? s.x - X : X - s.x;
+      if (dxu > 0 && dxu < 220) K *= 1 + 0.25 * Math.exp(-dxu / 70);
     }
   }
   return K;
@@ -148,6 +166,7 @@ function step(dt, w) {
       const hbf = Math.max(0.05, 0.5 * (Hc[gi - 1] + Hc[gi]) / GAMMA), yB = Math.pow(hbf / A, 1.5);
       byp = Math.max(0, 1 - yG / yB);
     }
+    if (s.type === 'headland') byp = 0;                          // far too big for sand to get round
     Q[gi] *= byp; s.byp = byp;
   }
   for (const s of S.structures) {
@@ -172,15 +191,36 @@ function step(dt, w) {
     const band = 6, per = s.q * c / (2 * band);
     for (let k = 1; k <= band; k++) { if (ch.i1 - k >= 0) S.yls[ch.i1 - k] += per; if (ch.i2 + k < N) S.yls[ch.i2 + k] += per; }
   }
-  if (S.slr > 0) {
-    const R = S.slr * 1e-3 * Wstar() / Dd * dt;
+  const rate = S.slr;
+  if (rate > 0) {
+    const R = rate * 1e-3 * Wstar() / Dd * dt;
     for (let i = 0; i < N; i++) S.yls[i] -= R;
-    S.eta += S.slr * 1e-3 * dt;
+    S.eta += rate * 1e-3 * dt;
   }
+  const soft = softMask(), Stot = w.surge + (S.storm ? w.tide : 0);
   for (let i = 0; i < N; i++) {
-    const Hl = Hc[i], yeq = -W_CS * (0.068 * Hl + w.surge) / (BERM + 1.28 * Hl);
-    const k = yeq < S.ycs[i] ? KE : KA;
+    const Hl = Hc[i], yeq = Math.min(0, -W_CS * (0.068 * Hl + Stot) / (BERM + 1.28 * Hl));
+    const k = yeq < S.ycs[i] ? KE * soft.cse[i] : KA * soft.csr[i];
     S.ycs[i] = yeq + (S.ycs[i] - yeq) * Math.exp(-k * dt);
+  }
+  // dunes: when run-up pushes the total water level above the dune toe, waves cut the dune back (Larson et al. 2004)
+  const seaLvl = S.eta + w.tide + w.surge, fall = Math.exp(-dt / 0.3), wall = wallMask(), perM = (Z_CREST - Z_TOE) / Dd;
+  S.twl = seaLvl + w.R2;
+  for (let i = 0; i < N; i++) {
+    S.over[i] *= fall;
+    if (wall[i]) continue;
+    const yy = S.yls[i] + S.ycs[i];
+    if (DUNE_TOE - yy > S.dune[i]) S.dune[i] = Math.min(DUNE_W, DUNE_TOE - yy); // the sea itself has eaten into the dune
+    const width = yy - (DUNE_TOE - S.dune[i]);
+    const ex = seaLvl + w.R2 * Math.sqrt(Math.max(0.05, Hc[i] / Math.max(w.Hb, 1e-3))) - toeZ(width);
+    if (ex > 0) {
+      const inc = Math.min(DUNE_W - S.dune[i], 4 * CS_D * ex * ex / (w.T * (Z_CREST - Z_TOE)) * SEC * dt * soft.de[i]);
+      S.dune[i] += inc; S.yls[i] += inc * perM;                 // the eroded dune sand feeds the beach
+      if (S.dune[i] >= DUNE_W - 0.5 && ex > 0.8) S.over[i] = 1;   // dune gone: waves wash over onto the road
+    } else if (width > 20 && S.dune[i] > 0) {
+      const dec = Math.min(S.dune[i], RD * soft.dr[i] * dt);
+      S.dune[i] -= dec; S.yls[i] -= dec * perM;                 // wind blows beach sand back into the dune
+    }
   }
   // constraints
   for (const s of S.structures) {
@@ -199,7 +239,7 @@ function step(dt, w) {
   S.t += dt;
 }
 function advance(dtReal) {
-  const simSpeed = S.storm ? 1 / 365 : S.speed;
+  const simSpeed = S.storm ? 0.5 / 365 : S.speed; // storms run at 12 hours per second, so you can watch the tide
   let remaining = simSpeed * dtReal, n = 0;
   while (remaining > 1e-12 && n < 1500) {
     W = currentWaves();
@@ -366,10 +406,19 @@ function draw(time) {
   for (let X = 0; X <= XL; X += 5) ctx.lineTo(px(X), py(shoreAt(X)));
   ctx.lineTo(CW, CH); ctx.closePath(); ctx.clip();
   // dune + road + houses
-  ctx.fillStyle = '#9fb477'; ctx.fillRect(0, py(DUNE_TOE), CW, (DUNE_TOE - 40) * sc);
+  // the dune runs from the houses up to its toe; storms cut its face back (x_d = S.dune)
+  const duneFace = X => DUNE_TOE - S.dune[cellOf(X)];
+  ctx.fillStyle = '#e3c88e'; ctx.fillRect(0, py(DUNE_TOE), CW, (DUNE_TOE - 40) * sc);   // bare sand where the dune was cut away
+  ctx.beginPath(); ctx.moveTo(0, py(40));
+  for (let i = 0; i < N; i++) { ctx.lineTo(px(i * DX), py(DUNE_TOE - S.dune[i])); ctx.lineTo(px((i + 1) * DX), py(DUNE_TOE - S.dune[i])); }
+  ctx.lineTo(CW, py(40)); ctx.closePath(); ctx.fillStyle = '#9fb477'; ctx.fill();
   const rg2 = seeded(7);
   ctx.strokeStyle = 'rgba(80, 110, 60, 0.55)'; ctx.lineWidth = 1;
-  for (let i = 0; i < 260; i++) { const X = rg2() * XL, Y = 42 + rg2() * 26; ctx.beginPath(); ctx.moveTo(px(X), py(Y)); ctx.lineTo(px(X + 2), py(Y + 4)); ctx.stroke(); }
+  for (let i = 0; i < 260; i++) { const X = rg2() * XL, Y = 42 + rg2() * 26; if (Y > duneFace(X) - 1) continue; ctx.beginPath(); ctx.moveTo(px(X), py(Y)); ctx.lineTo(px(X + 2), py(Y + 4)); ctx.stroke(); }
+  // scarp: a steep, fresh cliff where waves have bitten into the dune
+  ctx.strokeStyle = '#8a6a44'; ctx.lineWidth = Math.max(1.5, 2.4 * sc); ctx.beginPath(); let pd = false;
+  for (let i = 0; i < N; i++) { if (S.dune[i] > 0.6) { const Y = py(DUNE_TOE - S.dune[i]); if (!pd) ctx.moveTo(px(i * DX), Y); else ctx.lineTo(px(i * DX), Y); ctx.lineTo(px((i + 1) * DX), Y); pd = true; } else pd = false; }
+  ctx.stroke();
   ctx.fillStyle = '#d8d2c3'; ctx.fillRect(0, py(40), CW, 26 * sc);
   ctx.fillStyle = '#6f757b'; ctx.fillRect(0, py(12), CW, 12 * sc);
   ctx.strokeStyle = 'rgba(255, 230, 140, 0.8)'; ctx.setLineDash([8, 8]); ctx.lineWidth = 1;
@@ -377,6 +426,8 @@ function draw(time) {
   for (const h of S.houses) {
     if (!houseVisible(h)) continue;
     const st = houseStatus(h), wpx = Math.max(10, 28 * sc), hpx = Math.max(8, 20 * sc), cx = px(h.x), cy = py(28);
+    const fl = S.t - (h.flood ?? -9);
+    if (fl >= 0 && fl < 0.6 && st !== 'gone') ell(cx, cy + hpx * 0.25, wpx * 0.95, hpx * 0.55, 0, `rgba(70, 140, 190, ${(0.55 * (1 - fl / 0.6)).toFixed(3)})`); // flood water around the house
     ctx.save(); ctx.translate(cx, cy);
     if (st === 'gone') { // empty lot with rubble
       ctx.strokeStyle = 'rgba(80,80,80,0.7)'; ctx.setLineDash([3, 2]); ctx.lineWidth = 1; ctx.strokeRect(-wpx / 2, -hpx / 2, wpx, hpx); ctx.setLineDash([]);
@@ -385,10 +436,12 @@ function draw(time) {
     } else drawHouse(wpx, hpx, h.x, st === 'risk');
     ctx.restore();
   }
+  drawOverwash();
+  drawGrass(time);
   drawNests();
   // rivers (channel)
   for (const s of S.structures) if (s.type === 'river') drawRiver(s, time);
-  drawCars();
+  if (S.storm) drawStormWater(w, time);
   ctx.restore();
   // erosion scarp where the sea has cut into the dune or beyond
   ctx.strokeStyle = '#7a5c3a'; ctx.lineWidth = 2.2; ctx.beginPath(); let pen = false;
@@ -405,13 +458,12 @@ function draw(time) {
       ctx.strokeStyle = '#b3b8bc'; ctx.lineWidth = Math.max(5, 7 * sc);
       ctx.beginPath(); ctx.moveTo(px(s.x1), py(s.y)); ctx.lineTo(px(s.x2), py(s.y)); ctx.stroke();
     } else if (s.type === 'breakwater') drawRocks(s.x1, s.y, s.x2, s.y, 14, s.id);
+    else if (s.type === 'headland') drawHeadland(s);
     else if (isStem(s)) {
       drawRocks(s.x, STEM_ROOT, s.x, s.tip, s.type === 'jetty' ? 18 : 10, s.id);
       if (s.type === 'tgroin') drawRocks(s.x - s.head, s.tip, s.x + s.head, s.tip, 11, s.id + 99);
     }
   }
-  // seasonal fun: umbrellas in summer, boats, seals on breakwaters
-  drawFun(time);
   // particles
   ctx.fillStyle = 'rgba(250, 232, 180, 0.95)';
   for (const p of PARTS) {
@@ -445,349 +497,87 @@ function draw(time) {
   ctx.fillStyle = '#f2f7f8'; ctx.fillRect(bx, CH - 14, bar, 3);
   ctx.fillText('200 m', bx + bar / 2 - 16, CH - 17);
 }
-const EMOJI_FONT = '"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
-function emoji(ch, X, Y, sizePx) { ctx.font = `${sizePx}px ${EMOJI_FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(ch, px(X), py(Y)); ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; }
-function emojiAt(ch, X, Y, size, flip, alpha) {
-  ctx.save(); ctx.globalAlpha = alpha == null ? 1 : alpha; ctx.translate(px(X), py(Y)); if (flip) ctx.scale(-1, 1);
-  ctx.font = `${size}px ${EMOJI_FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(ch, 0, 0); ctx.restore();
+function drawHeadland(s) {
+  // a natural rocky point: a broad mass of ledge with a wooded top where it meets the land
+  const hw = s.edge ? 30 : 48, r = seeded((s.id || 1) * 7 + 3), x0 = s.x, top = s.tip;
+  ctx.beginPath(); ctx.moveTo(px(x0 - hw - 6), py(0));
+  const n = 9;
+  for (let k = 0; k <= n; k++) { const f = k / n, Y = f * top, wob = (r() - 0.5) * 10, w2 = (hw + wob) * (1 - 0.6 * f * f); ctx.lineTo(px(x0 - w2), py(Y)); }
+  for (let k = n; k >= 0; k--) { const f = k / n, Y = f * top, wob = (r() - 0.5) * 10, w2 = (hw + wob) * (1 - 0.6 * f * f); ctx.lineTo(px(x0 + w2), py(Y)); }
+  ctx.closePath(); ctx.fillStyle = '#6f675e'; ctx.fill(); ctx.strokeStyle = '#3f3a35'; ctx.lineWidth = 1.2; ctx.stroke();
+  for (let k = 0; k < 18; k++) { ctx.fillStyle = k % 2 ? '#8c847a' : '#58514a'; ctx.beginPath(); ctx.arc(px(x0 + (r() - 0.5) * hw * 1.2), py(r() * top), Math.max(1.2, 3.2 * sc), 0, 7); ctx.fill(); }
+  const land = Math.min(top - 25, shoreAt(x0) - 12);
+  if (land > 20) { ctx.fillStyle = '#5f7f45'; ctx.beginPath(); ctx.ellipse(px(x0), py(land / 2), hw * 0.75 * sc, land / 2 * sc, 0, 0, 7); ctx.fill();
+    for (let k = 0; k < 6; k++) ell(px(x0 + (r() - 0.5) * hw), py(r() * land * 0.9 + 6), Math.max(2, 5 * sc), Math.max(2, 5 * sc), 0, '#3f6b33'); }
+  ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 1.4; ctx.beginPath();   // foam around the tip
+  ctx.arc(px(x0), py(top - 4), Math.max(4, hw * 0.5 * sc), Math.PI * 1.1, Math.PI * 1.9); ctx.stroke();
 }
-const SHELLS = (() => { const r = seeded(99); return Array.from({ length: 24 }, () => ({ u: r(), f: r(), k: r() })); })();
-// does moving from X0 to X1 at height Y run into a structure (or the beach, for swimmers and boats)?
-const BODY = { boat: 36, sail: 34, fish: 12, shark: 40, whale: 70, porpoise: 22, gull: 0 }; // half-length in metres, for collisions
-function blockedSea(X0, X1, Y, half) {
-  half = half || 0; const dir = Math.sign(X1 - X0) || 1, F0 = X0 + dir * half, F1 = X1 + dir * half, lo = Math.min(X1 - half, X1 + half), hi = Math.max(X1 - half, X1 + half);
-  for (const s of S.structures) {
-    if (isStem(s) && ((F0 < s.x && F1 >= s.x) || (F0 > s.x && F1 <= s.x)) && Y < s.tip + 16) return true;
-    if (s.type === 'breakwater' && Math.abs(Y - s.y) < 22 && hi > s.x1 - 8 && lo < s.x2 + 8) return true;
-    if (s.type === 'tgroin' && Math.abs(Y - s.tip) < 22 && hi > s.x - s.head - 8 && lo < s.x + s.head + 8) return true;
+function drawOverwash() {
+  // fans of sand and water where waves have poured over a flattened dune onto the road and lots
+  for (let i = 0; i < N; i++) {
+    const o = S.over[i]; if (o < 0.05) continue;
+    const X = (i + 0.5) * DX, Yt = DUNE_TOE - S.dune[i], reach = 18 + 40 * o;
+    ctx.fillStyle = `rgba(232, 208, 150, ${(0.75 * Math.min(1, o * 1.4)).toFixed(3)})`;
+    ctx.beginPath(); ctx.moveTo(px(X - 7), py(Yt)); ctx.quadraticCurveTo(px(X - 12), py(Yt - reach * 0.7), px(X), py(Yt - reach)); ctx.quadraticCurveTo(px(X + 12), py(Yt - reach * 0.7), px(X + 7), py(Yt)); ctx.fill();
   }
-  return Y < shoreAt(clamp(X1, 0, XL)) + surfWidthAt(clamp(X1, 0, XL)) + 20;
 }
-function blockedBeach(X0, X1) {
-  for (const s of S.structures) {
-    if (isStem(s) && ((X0 < s.x && X1 >= s.x) || (X0 > s.x && X1 <= s.x))) return true;
-    if (s.type === 'river' && Math.abs(X1 - s.x) < s.w / 2 + 8) return true;
+function drawStormWater(w, time) {
+  // the sea surface on the beach during a storm: still water (tide + surge) and the run-up reach beyond it
+  const lvl = S.eta + w.tide + w.surge, rows = [], rows2 = [];
+  for (let X = 0; X <= XL; X += 5) {
+    const i = cellOf(X), sh = shoreAt(X), width = Math.max(0, sh - (DUNE_TOE - S.dune[i])), zt = toeZ(width);
+    const reach = zl => width * clamp(zl / zt, 0, 1) + (zl > zt ? 6 : 0);
+    const R = w.R2 * Math.sqrt(Math.max(0.05, (Hc[i] || w.Hb) / Math.max(w.Hb, 1e-3))) * (0.75 + 0.25 * Math.sin(time * 2.4 + X * 0.03));
+    rows.push([X, sh - reach(lvl)]); rows2.push([X, sh - reach(lvl + R)]);
   }
-  return X1 < 5 || X1 > XL - 5;
+  const band = (pts, fill) => { ctx.beginPath(); pts.forEach(([X, Y], k) => k ? ctx.lineTo(px(X), py(Y)) : ctx.moveTo(px(X), py(Y))); for (let k = pts.length - 1; k >= 0; k--) ctx.lineTo(px(pts[k][0]), py(shoreAt(pts[k][0]) + 1)); ctx.closePath(); ctx.fillStyle = fill; ctx.fill(); };
+  band(rows2, 'rgba(235, 245, 250, 0.45)');   // swash / run-up
+  band(rows, 'rgba(63, 152, 181, 0.85)');     // still water level
+  ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 1.4; ctx.beginPath();
+  rows2.forEach(([X, Y], k) => k ? ctx.lineTo(px(X), py(Y)) : ctx.moveTo(px(X), py(Y))); ctx.stroke();
 }
-function spawnCritters() {
-  S.critters = [
-    { kind: 'boat', e: '🚤', x: 200, y: 610, vx: 11, size: 0.95 },
-    { kind: 'sail', e: '⛵', x: 1100, y: 520, vx: -6, size: 1.05 },
-    { kind: 'gull', e: '🕊️', x: 700, y: 470, vx: 18, size: 0.65 },
-    { kind: 'gull', e: '🕊️', x: 1200, y: 300, vx: -14, size: 0.65, ph: 2 },
-    { kind: 'gull', e: '🕊️', x: 150, y: 560, vx: 22, size: 0.65, ph: 4 },
-    { kind: 'fish', e: '🐟', x: 300, y: 330, vx: 5, size: 0.55 },
-    { kind: 'fish', e: '🐠', x: 900, y: 390, vx: -4, size: 0.55 },
-  ];
-}
-function updateCritters(dt, t) {
-  if (!S.critters.length) spawnCritters();
-  const stormy = W && W.sf > 0.1;
-  // occasional visitors
-  if (S.show.crabs && !stormy && Math.random() < dt / 9 && S.critters.filter(c => c.kind === 'crab').length < 2) {
-    const x = 80 + Math.random() * (XL - 160);
-    if (shoreAt(x) - DUNE_TOE > 20 && !blockedBeach(x, x)) S.critters.push({ kind: 'crab', e: '🦀', x, off: 4 + Math.random() * 14, vx: (Math.random() < 0.5 ? -1 : 1) * (7 + Math.random() * 5), size: 0.55, life: 5 + Math.random() * 5 });
-  }
-  if (S.show.sharks && Math.random() < dt / 140 && !S.critters.some(c => c.kind === 'shark' || c.kind === 'whale' || c.kind === 'porpoise')) {
-    const dir = Math.random() < 0.5 ? 1 : -1; S.critters.push({ kind: 'shark', e: '🦈', x: dir > 0 ? -60 : XL + 60, y: 470 + Math.random() * 150, vx: dir * 10, size: 0.9, once: true });
-    toast('🦈 Shark spotted offshore! It\'s just passing through.');
-  }
-  if (S.show.porpoises && Math.random() < dt / 80 && !S.critters.some(c => c.kind === 'porpoise' || c.kind === 'shark' || c.kind === 'whale')) {
-    const dir = Math.random() < 0.5 ? 1 : -1, y0 = 380 + Math.random() * 200;
-    for (let i = 0; i < 3; i++) S.critters.push({ kind: 'porpoise', x: (dir > 0 ? -40 : XL + 40) - dir * i * 28, y: y0 + (i - 1) * 14, vx: dir * 6.5, size: 1, ph: i * 1.3, once: true });
-    toast('🐬 A pod of harbor porpoises is passing by!');
-  }
-  if (S.show.whales && Math.random() < dt / 220 && !S.critters.some(c => c.kind === 'whale' || c.kind === 'shark' || c.kind === 'porpoise')) {
-    const dir = Math.random() < 0.5 ? 1 : -1; S.critters.push({ kind: 'whale', e: '🐋', x: dir > 0 ? -80 : XL + 80, y: YL - 20, vx: dir * 5, size: 1.3, once: true });
-    toast('🐋 Whale sighting far offshore!');
-  }
-  for (const c of S.critters) {
-    if (c.kind === 'crab') {
-      const go = Math.sin(t * 7 + c.x) > -0.2 ? 1 : 0.1, nx = c.x + c.vx * go * dt;
-      if (blockedBeach(c.x, nx)) c.vx = -c.vx; else c.x = nx;
-      c.life -= dt; continue;
-    }
-    if (c.kind === 'fish' && Math.random() < dt / 6) c.vx = -c.vx;
-    if (c.kind === 'fish') c.y = clamp(c.y + (Math.random() - 0.5) * 6 * dt, 200, YL - 40);
-    const half = BODY[c.kind] || 0;
-    if (c.kind !== 'gull') for (const s of S.structures) { // already overlapping something (e.g. just built on top of it)? move clear
-      if (isStem(s) && Math.abs(c.x - s.x) < half && c.y < s.tip + 16) { if (s.tip + 40 < YL - 10) c.y = s.tip + 40; else c.x = s.x + (c.x >= s.x ? 1 : -1) * (half + 2); }
-      if ((s.type === 'breakwater' || s.type === 'tgroin') && Math.abs(c.y - (s.type === 'breakwater' ? s.y : s.tip)) < 22) {
-        const a = s.type === 'breakwater' ? s.x1 : s.x - s.head, b2 = s.type === 'breakwater' ? s.x2 : s.x + s.head;
-        if (c.x + half > a - 8 && c.x - half < b2 + 8) c.y = Math.min(YL - 12, (s.type === 'breakwater' ? s.y : s.tip) + 40);
-      }
-    }
-    const nx = c.x + c.vx * dt;
-    if (c.kind !== 'gull' && blockedSea(c.x, nx, c.y, half)) {
-      // stuck against the beach? swim or sail farther out; otherwise turn around
-      if (c.y < shoreAt(clamp(nx, 0, XL)) + surfWidthAt(clamp(nx, 0, XL)) + 20) c.y = Math.min(YL - 20, c.y + 30 * dt + 2);
-      else c.vx = -c.vx;
-    } else c.x = nx;
-    if (c.x < -100 || c.x > XL + 100) { if (c.once) c.dead = true; else c.x = c.x < 0 ? XL + 90 : -90; }
-  }
-  S.critters = S.critters.filter(c => !c.dead && !(c.kind === 'crab' && (c.life <= 0 || stormy)));
-}
-// ---------- hand-drawn sprites (top-down, same flat style as the structures and cars) ----------
-// every sprite is drawn facing +x around (0,0); spr() flips it when it moves left
-function spr(X, Y, dir, fn, alpha) {
-  ctx.save(); if (alpha != null) ctx.globalAlpha = alpha; ctx.translate(px(X), py(Y)); if (dir < 0) ctx.scale(-1, 1); fn(); ctx.restore();
-}
+const houseBlockedByStructure = h => S.structures.some(r => (r.type === 'river' && Math.abs(h.x - r.x) < riverBank(r) + 12) || (r.type === 'headland' && Math.abs(h.x - r.x) < 60));
 const ell = (x, y, rx, ry, rot, fill) => { ctx.fillStyle = fill; ctx.beginPath(); ctx.ellipse(x, y, rx, ry, rot || 0, 0, 7); ctx.fill(); };
-function wake(k, len, spread) {
-  ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 1.2;
-  ctx.beginPath(); ctx.moveTo(-len * 0.35 * k, -2 * k); ctx.lineTo(-len * k, -spread * k); ctx.moveTo(-len * 0.35 * k, 2 * k); ctx.lineTo(-len * k, spread * k); ctx.stroke();
-}
-function sprLobsterBoat(k, t) {
-  wake(k, 34, 8);
-  ctx.fillStyle = '#f4f1ea'; ctx.strokeStyle = '#2b3a44'; ctx.lineWidth = 0.9;
-  ctx.beginPath(); ctx.moveTo(15 * k, 0); ctx.quadraticCurveTo(8 * k, -5.2 * k, -9 * k, -5 * k); ctx.lineTo(-12 * k, -4.4 * k); ctx.lineTo(-12 * k, 4.4 * k); ctx.lineTo(-9 * k, 5 * k); ctx.quadraticCurveTo(8 * k, 5.2 * k, 15 * k, 0); ctx.fill(); ctx.stroke();
-  ctx.fillStyle = '#b8413a'; ctx.fillRect(-12 * k, -4.4 * k, 1.4 * k, 8.8 * k);                 // red transom
-  ctx.fillStyle = '#3c6e91'; ctx.fillRect(-1 * k, -3.2 * k, 7 * k, 6.4 * k);                    // wheelhouse roof
-  ctx.fillStyle = '#a9d6ee'; ctx.fillRect(5 * k, -3.2 * k, 1.4 * k, 6.4 * k);                   // windshield
-  ctx.fillStyle = '#e8a33a'; ctx.fillRect(-9.5 * k, -3.6 * k, 3.2 * k, 3 * k); ctx.fillStyle = '#e0c24a'; ctx.fillRect(-9.5 * k, 0.6 * k, 3.2 * k, 3 * k); // lobster traps
-}
-function sprSailboat(k, t) {
-  wake(k, 26, 6);
-  ctx.fillStyle = '#ffffff'; ctx.strokeStyle = '#2b3a44'; ctx.lineWidth = 0.9;
-  ctx.beginPath(); ctx.moveTo(13 * k, 0); ctx.quadraticCurveTo(4 * k, -4 * k, -10 * k, -3.2 * k); ctx.lineTo(-10 * k, 3.2 * k); ctx.quadraticCurveTo(4 * k, 4 * k, 13 * k, 0); ctx.fill(); ctx.stroke();
-  ctx.fillStyle = '#c7d6de'; ctx.fillRect(-9 * k, -1.6 * k, 4 * k, 3.2 * k);                   // cockpit
-  const luff = Math.sin(t * 1.5) * 0.6;
-  ctx.fillStyle = '#fffaf0'; ctx.strokeStyle = 'rgba(40,60,70,0.7)';
-  ctx.beginPath(); ctx.moveTo(3 * k, 0); ctx.quadraticCurveTo(-2 * k, (6 + luff) * k, -9 * k, 7.5 * k); ctx.lineTo(-9 * k, 6.3 * k); ctx.lineTo(3 * k, 0); ctx.fill(); ctx.stroke(); // mainsail (boom out to one side)
-  ell(3 * k, 0, 1 * k, 1 * k, 0, '#2b3a44');                                                    // mast
-}
-function sprGull(k, t) {
-  // herring gull from above: white head and body, pale grey back and wings, black wingtips with white spots
-  const f = Math.sin(t * 8), span = (9 + 2.8 * f) * k, sweep = 0.35 + 0.15 * f, o = '#4b555c';
-  ell(7 * k, 10 * k, 6 * k, 2.4 * k, 0, 'rgba(0,0,0,0.16)');                                      // shadow on the water
-  for (const sg of [-1, 1]) {
-    const tipX = -3.5 * k - sweep * 6 * k, tipY = sg * span;
-    ctx.fillStyle = '#b7c1c8'; ctx.strokeStyle = o; ctx.lineWidth = 0.7;
-    ctx.beginPath(); ctx.moveTo(2 * k, sg * 1 * k); ctx.quadraticCurveTo(1.5 * k, sg * span * 0.55, tipX, tipY);   // leading edge
-    ctx.quadraticCurveTo(-3.5 * k, sg * span * 0.55, -3 * k, sg * 1 * k); ctx.closePath(); ctx.fill(); ctx.stroke(); // trailing edge
-    ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.moveTo(-3 * k, sg * 1.5 * k); ctx.quadraticCurveTo(-3.4 * k, sg * span * 0.55, tipX + 1.2 * k, tipY - sg * 1.2 * k); ctx.stroke(); // white trailing edge
-    ctx.fillStyle = '#1b1b1b'; ctx.beginPath(); ctx.moveTo(tipX, tipY); ctx.lineTo(tipX + 3.2 * k, tipY - sg * 2.6 * k); ctx.lineTo(tipX + 0.4 * k, tipY - sg * 3.2 * k); ctx.closePath(); ctx.fill(); // black tip
-    ell(tipX + 1.3 * k, tipY - sg * 1.8 * k, 0.45 * k, 0.45 * k, 0, '#fff');                                    // white mirror spot
-  }
-  ctx.fillStyle = '#ffffff'; ctx.strokeStyle = o; ctx.lineWidth = 0.6;
-  ctx.beginPath(); ctx.moveTo(-5 * k, -1.4 * k); ctx.lineTo(-7 * k, -0.9 * k); ctx.lineTo(-7 * k, 0.9 * k); ctx.lineTo(-5 * k, 1.4 * k); ctx.fill(); ctx.stroke(); // tail
-  ctx.beginPath(); ctx.ellipse(0, 0, 5 * k, 1.8 * k, 0, 0, 7); ctx.fill(); ctx.stroke();                              // body
-  ctx.fillStyle = '#b7c1c8'; ctx.beginPath(); ctx.ellipse(-0.5 * k, 0, 3.2 * k, 1.3 * k, 0, 0, 7); ctx.fill();        // grey back between the wings
-  ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(4.6 * k, 0, 1.6 * k, 0, 7); ctx.fill(); ctx.stroke();           // head
-  ctx.fillStyle = '#f2c230'; ctx.beginPath(); ctx.moveTo(5.9 * k, -0.5 * k); ctx.lineTo(8.3 * k, -0.1 * k); ctx.lineTo(8.3 * k, 0.2 * k); ctx.lineTo(5.9 * k, 0.5 * k); ctx.fill(); // yellow bill
-  ell(7.6 * k, 0.15 * k, 0.35 * k, 0.25 * k, 0, '#d23b3b');                                       // red spot on the bill
-  ell(5 * k, -0.9 * k, 0.3 * k, 0.3 * k, 0, '#111'); ell(5 * k, 0.9 * k, 0.3 * k, 0.3 * k, 0, '#111');
-}
-function sprFish(k, t, col) {
-  // Atlantic mackerel seen through the water: dark barred back, forked tail, silvery sides
-  const w = Math.sin(t * 8) * 0.25;
-  ctx.save(); ctx.globalAlpha *= 0.85;
-  ctx.fillStyle = '#9fb7c4'; ctx.beginPath(); ctx.ellipse(0, 0, 5.2 * k, 1.9 * k, 0, 0, 7); ctx.fill();          // silvery flanks
-  ctx.fillStyle = '#1f4a5e'; ctx.beginPath(); ctx.ellipse(0, 0, 5 * k, 1.1 * k, 0, 0, 7); ctx.fill();            // dark back
-  ctx.strokeStyle = 'rgba(10,30,40,0.8)'; ctx.lineWidth = 0.5;
-  for (let i = -3; i <= 2; i++) { ctx.beginPath(); ctx.moveTo(i * k, -1 * k); ctx.lineTo((i + 0.6) * k, 1 * k); ctx.stroke(); } // bars
-  ctx.fillStyle = '#1f4a5e'; ctx.beginPath(); ctx.moveTo(-4.5 * k, 0); ctx.lineTo(-7.6 * k, (-2.3 + w * 4) * k); ctx.lineTo(-6.6 * k, (w * 4) * k); ctx.lineTo(-7.6 * k, (2.3 + w * 4) * k); ctx.fill(); // forked tail
-  ell(3.8 * k, -0.7 * k, 0.35 * k, 0.35 * k, 0, '#0b1a22');
-  ctx.restore();
-}
-function sprShark(k, t) {
-  const w = Math.sin(t * 3) * 0.2, sil = 'rgba(18, 38, 54, 0.62)';
-  ctx.fillStyle = sil; ctx.beginPath();                                                          // torpedo body with pointed snout
-  ctx.moveTo(15 * k, 0); ctx.quadraticCurveTo(10 * k, -3.8 * k, 0, -3.6 * k); ctx.quadraticCurveTo(-9 * k, -2.6 * k, -13 * k, -0.8 * k);
-  ctx.lineTo(-13 * k, 0.8 * k); ctx.quadraticCurveTo(-9 * k, 2.6 * k, 0, 3.6 * k); ctx.quadraticCurveTo(10 * k, 3.8 * k, 15 * k, 0); ctx.fill();
-  ctx.beginPath(); ctx.moveTo(4 * k, 3 * k); ctx.lineTo(-3 * k, 9 * k); ctx.lineTo(-1 * k, 3 * k); ctx.moveTo(4 * k, -3 * k); ctx.lineTo(-3 * k, -9 * k); ctx.lineTo(-1 * k, -3 * k); ctx.fill(); // pectoral fins
-  ctx.beginPath(); ctx.moveTo(-12 * k, 0); ctx.lineTo(-20 * k, (-6 + w * 10) * k); ctx.lineTo(-17 * k, (w * 10) * k); ctx.lineTo(-19 * k, (4 + w * 10) * k); ctx.fill(); // forked tail
-  ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 1.1; ctx.beginPath(); ctx.arc(1 * k, 0, 4.8 * k, 2.1, 4.2); ctx.stroke(); ctx.beginPath(); ctx.arc(-1 * k, 0, 6.5 * k, 2.3, 4.0); ctx.stroke(); // wake around the fin
-  ctx.fillStyle = '#4a5a64'; ctx.strokeStyle = '#1c262c'; ctx.lineWidth = 0.8;
-  ctx.beginPath(); ctx.moveTo(4 * k, 0); ctx.lineTo(-3.5 * k, -2 * k); ctx.lineTo(-2.5 * k, 1.4 * k); ctx.closePath(); ctx.fill(); ctx.stroke(); // dorsal fin above the water
-  ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.beginPath(); ctx.moveTo(3 * k, -0.2 * k); ctx.lineTo(-2.5 * k, -1.5 * k); ctx.lineTo(-1.5 * k, -0.3 * k); ctx.fill();
-}
-function sprWhale(k, t) {
-  // humpback: long pale-edged flippers, knobbly head, broad flukes
-  const w = Math.sin(t * 1.2) * 0.15, body = 'rgba(28, 40, 50, 0.72)', o = 'rgba(10,18,24,0.8)';
-  ctx.strokeStyle = o; ctx.lineWidth = 0.9;
-  for (const sg of [-1, 1]) { ctx.fillStyle = 'rgba(205, 216, 222, 0.8)'; ctx.beginPath(); ctx.ellipse(6 * k, sg * 10 * k, 11 * k, 2.2 * k, -sg * 0.55, 0, 7); ctx.fill(); ctx.stroke(); } // long white flippers
-  ctx.fillStyle = body; ctx.beginPath(); ctx.ellipse(0, 0, 26 * k, 7 * k, 0, 0, 7); ctx.fill(); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(-24 * k, 0); ctx.quadraticCurveTo(-32 * k, (-10 + w * 20) * k, -37 * k, (-9 + w * 20) * k); ctx.quadraticCurveTo(-31 * k, (w * 20) * k, -37 * k, (9 + w * 20) * k); ctx.quadraticCurveTo(-32 * k, (10 + w * 20) * k, -24 * k, 0); ctx.fill(); ctx.stroke(); // flukes
-  ctx.fillStyle = 'rgba(0,0,0,0.35)'; for (let i = 0; i < 5; i++) { ctx.beginPath(); ctx.arc((19 + i * 1.5) * k, ((i % 2) - 0.5) * 2.4 * k, 0.7 * k, 0, 7); ctx.fill(); } // tubercles on the head
-  ell(15.5 * k, -0.7 * k, 0.6 * k, 0.35 * k, 0, '#0b0f12'); ell(15.5 * k, 0.7 * k, 0.6 * k, 0.35 * k, 0, '#0b0f12'); // paired blowholes
-  ell(-4 * k, 0, 1.4 * k, 0.8 * k, 0, 'rgba(0,0,0,0.5)');                                            // small dorsal fin
-  ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.ellipse(0, 0, 29 * k, 9 * k, 0, 0, 7); ctx.stroke(); // slick around the body
-  const ph = (t * 0.35) % 1;
-  if (ph < 0.18) { const r = ph / 0.18; ctx.fillStyle = `rgba(255,255,255,${0.85 * (1 - r)})`; for (const [dx, dy, rr] of [[0, 0, 2.6], [-1.2, -2.2, 2], [-1.2, 2.2, 2], [-2.4, 0, 1.8]]) { ctx.beginPath(); ctx.arc((15.5 + dx * (1 + r)) * k, dy * k * (1 + r), rr * k * (0.6 + r * 1.4), 0, 7); ctx.fill(); } } // spout rises from the blowholes
-}
-function sprCrab(k, t, moving) {
-  const wig = moving ? Math.sin(t * 30) * 0.6 : 0, o = '#4a1a0a';
-  ell(1 * k, 1.4 * k, 5 * k, 3.4 * k, 0, 'rgba(0,0,0,0.18)');
-  ctx.strokeStyle = '#a8391a'; ctx.lineWidth = 1.3 * Math.max(0.8, k); ctx.lineCap = 'round';
-  for (let i = 0; i < 4; i++) for (const sgn of [-1, 1]) {
-    const bx = (-2.6 + i * 1.7) * k, by = sgn * 2.2 * k, kx = bx + (i - 1.5 + (i % 2 ? wig : -wig)) * 1.2 * k, ky = by + sgn * 2.2 * k;
-    ctx.beginPath(); ctx.moveTo(bx, by * 0.6); ctx.lineTo(kx, ky); ctx.lineTo(kx + (i - 1.5) * 0.8 * k, ky + sgn * 1.4 * k); ctx.stroke(); // jointed legs
-  }
-  ctx.fillStyle = '#d4552b'; ctx.strokeStyle = o; ctx.lineWidth = 0.8;
-  ctx.beginPath(); ctx.ellipse(0, 0, 3.9 * k, 2.8 * k, 0, 0, 7); ctx.fill(); ctx.stroke();               // shell
-  ell(-0.5 * k, 0.4 * k, 2.6 * k, 1.5 * k, 0, '#e87a4c'); ell(-0.8 * k, 0.7 * k, 1.2 * k, 0.6 * k, 0, 'rgba(255,255,255,0.35)'); // highlight
-  for (const sgn of [-1, 1]) {
-    ctx.strokeStyle = '#a8391a'; ctx.lineWidth = 1.3 * Math.max(0.8, k); ctx.beginPath(); ctx.moveTo(sgn * 2 * k, -2 * k); ctx.lineTo(sgn * 3.2 * k, -3.8 * k); ctx.stroke();
-    ctx.fillStyle = '#c94a24'; ctx.strokeStyle = o; ctx.lineWidth = 0.7; ctx.beginPath(); ctx.ellipse(sgn * 3.4 * k, -4.9 * k, 1.7 * k, 1.2 * k, sgn * 0.5, 0, 7); ctx.fill(); ctx.stroke(); // claws toward the sea
-    ctx.strokeStyle = o; ctx.beginPath(); ctx.moveTo(sgn * 3.6 * k, -6 * k); ctx.lineTo(sgn * 3.2 * k, -5 * k); ctx.stroke();
-  }
-  ell(-1 * k, -2.5 * k, 0.5 * k, 0.5 * k, 0, '#111'); ell(1 * k, -2.5 * k, 0.5 * k, 0.5 * k, 0, '#111');
-}
-function sprLobster(k, t) {
-  // Maine lobster (live colours: dark olive-brown with orange-red edges), outlined so it reads on the rocks
-  const tw = Math.sin(t * 2) * 0.3, o = '#140d06';
-  ell(1 * k, 1.2 * k, 12 * k, 4 * k, 0, 'rgba(0,0,0,0.25)');
-  ctx.strokeStyle = '#e2773a'; ctx.lineWidth = 0.8;
-  ctx.beginPath(); ctx.moveTo(4.5 * k, -0.6 * k); ctx.quadraticCurveTo(10 * k, (-4 + tw) * k, 15 * k, (-6 + tw) * k); ctx.moveTo(4.5 * k, 0.6 * k); ctx.quadraticCurveTo(10 * k, (4 - tw) * k, 15 * k, (6 - tw) * k); ctx.stroke(); // antennae
-  ctx.strokeStyle = o; ctx.lineWidth = 0.7;
-  for (let i = 0; i < 5; i++) { ctx.fillStyle = i % 2 ? '#5a4a22' : '#6b5728'; ctx.beginPath(); ctx.ellipse((-2.5 - i * 1.7) * k, 0, (1.7 - i * 0.12) * k, (2 - i * 0.2) * k, 0, 0, 7); ctx.fill(); ctx.stroke(); } // tail segments
-  ctx.fillStyle = '#b8562a'; ctx.beginPath(); ctx.moveTo(-10.5 * k, 0); ctx.lineTo(-13.5 * k, -2.5 * k); ctx.lineTo(-13 * k, 0); ctx.lineTo(-13.5 * k, 2.5 * k); ctx.closePath(); ctx.fill(); ctx.stroke(); // tail fan
-  for (const sgn of [-1, 1]) {
-    ctx.strokeStyle = o; ctx.lineWidth = 1.6 * k; ctx.beginPath(); ctx.moveTo(3 * k, sgn * 1.2 * k); ctx.lineTo(5.6 * k, sgn * 3.4 * k); ctx.stroke();
-    ctx.strokeStyle = '#6b5728'; ctx.lineWidth = 1 * k; ctx.beginPath(); ctx.moveTo(3 * k, sgn * 1.2 * k); ctx.lineTo(5.6 * k, sgn * 3.4 * k); ctx.stroke();
-    ctx.fillStyle = sgn > 0 ? '#5f4c22' : '#6b5728'; ctx.strokeStyle = o; ctx.lineWidth = 0.8;
-    ctx.beginPath(); ctx.ellipse(8 * k, sgn * 3.9 * k, (sgn > 0 ? 3 : 2.5) * k, (sgn > 0 ? 1.6 : 1.2) * k, sgn * 0.25, 0, 7); ctx.fill(); ctx.stroke(); // crusher and pincer claws
-    ctx.fillStyle = '#d9662f'; ctx.beginPath(); ctx.ellipse(10.4 * k, sgn * 4.4 * k, 1 * k, 0.7 * k, sgn * 0.25, 0, 7); ctx.fill(); ctx.stroke(); // orange claw tips
-  }
-  ctx.fillStyle = '#6b5728'; ctx.strokeStyle = o; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.ellipse(1 * k, 0, 3.7 * k, 2.2 * k, 0, 0, 7); ctx.fill(); ctx.stroke(); // carapace
-  ell(0.5 * k, -0.6 * k, 2.4 * k, 0.7 * k, 0, 'rgba(255,220,160,0.35)');                          // shine
-  ctx.fillStyle = 'rgba(184,86,42,0.7)'; for (const [x, y] of [[-0.5, 0.8], [2, 0.6], [-3.5, -0.4], [-6.5, 0.5]]) { ctx.beginPath(); ctx.arc(x * k, y * k, 0.45 * k, 0, 7); ctx.fill(); } // mottling
-  ell(4.2 * k, -0.9 * k, 0.4 * k, 0.4 * k, 0, '#000'); ell(4.2 * k, 0.9 * k, 0.4 * k, 0.4 * k, 0, '#000');
-}
-function sprSeal(k, t) {
-  const bob = Math.sin(t * 0.8) * 0.3, o = '#241f1c';
-  ctx.lineWidth = 1.1; ctx.strokeStyle = o;
-  ell(1.5 * k, 2 * k, 10.5 * k, 4 * k, 0, 'rgba(0,0,0,0.28)');                                     // shadow on the rocks
-  const flip = (x, y, rx, ry, r) => { ctx.fillStyle = '#7d736b'; ctx.beginPath(); ctx.ellipse(x, y, rx, ry, r, 0, 7); ctx.fill(); ctx.stroke(); };
-  flip(-9.8 * k, -1.6 * k, 2.4 * k, 1 * k, -0.5); flip(-9.8 * k, 1.6 * k, 2.4 * k, 1 * k, 0.5);   // rear flippers
-  flip(2 * k, -3.7 * k, 2.2 * k, 0.9 * k, -0.6); flip(2 * k, 3.7 * k, 2.2 * k, 0.9 * k, 0.6);     // fore flippers
-  ctx.fillStyle = '#a89c90'; ctx.beginPath(); ctx.ellipse(0, 0, 9 * k, 3.5 * k, bob * 0.1, 0, 7); ctx.fill(); ctx.stroke(); // body
-  ell(-0.5 * k, -1.2 * k, 6.5 * k, 1.3 * k, 0, 'rgba(255,255,255,0.35)');                         // sheen on the back
-  ctx.fillStyle = 'rgba(60,50,44,0.55)'; for (const [x, y] of [[-3, -1], [1, 1.3], [-6, 0.9], [3.5, -1.5], [-1, 0.2]]) { ctx.beginPath(); ctx.arc(x * k, y * k, 0.65 * k, 0, 7); ctx.fill(); } // mottled spots
-  ctx.fillStyle = '#9c9084'; ctx.beginPath(); ctx.ellipse(8.6 * k, bob * k, 2.9 * k, 2.5 * k, 0, 0, 7); ctx.fill(); ctx.stroke(); // head
-  ell(9.8 * k, (bob - 0.95) * k, 0.55 * k, 0.55 * k, 0, '#111'); ell(9.8 * k, (bob + 0.95) * k, 0.55 * k, 0.55 * k, 0, '#111');
-  ell(11.3 * k, bob * k, 0.6 * k, 0.55 * k, 0, '#1b1b1b');                                        // nose
-  ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = 0.5;
-  for (const sg of [-1, 1]) { ctx.beginPath(); ctx.moveTo(11 * k, (bob + sg * 0.6) * k); ctx.lineTo(13 * k, (bob + sg * 1.6) * k); ctx.stroke(); } // whiskers
-}
-function sprPorpoise(k, t, ph) {
-  const s = Math.sin(t * 1.7 + ph); // rolls up to breathe, then slips under
-  if (s < 0.15) { ctx.globalAlpha *= 0.3; ctx.fillStyle = 'rgb(14, 38, 54)'; ctx.beginPath(); ctx.ellipse(0, 0, 8.5 * k, 2.2 * k, 0, 0, 7); ctx.fill(); return; }
-  const a = Math.min(1, (s - 0.15) * 2.5);
-  ctx.strokeStyle = `rgba(255,255,255,${0.75 * a})`; ctx.lineWidth = 1.1; ctx.beginPath(); ctx.ellipse(0, 0, 10 * k, 3.6 * k, 0, 0, 7); ctx.stroke(); // ring of surf
-  ctx.globalAlpha *= a;
-  ctx.fillStyle = '#8795a0'; ctx.beginPath(); ctx.ellipse(0.5 * k, 0, 8.4 * k, 2.6 * k, 0, 0, 7); ctx.fill();        // pale grey flanks
-  ctx.fillStyle = '#323c44'; ctx.strokeStyle = '#151b20'; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.ellipse(0, 0, 8 * k, 1.8 * k, 0, 0, 7); ctx.fill(); ctx.stroke(); // dark back
-  ell(1.5 * k, -0.5 * k, 5 * k, 0.5 * k, 0, 'rgba(255,255,255,0.35)');                                  // wet sheen
-  ctx.fillStyle = '#1d252b'; ctx.beginPath(); ctx.moveTo(1.5 * k, 0); ctx.lineTo(-2.8 * k, -1.5 * k); ctx.lineTo(-2.2 * k, 1 * k); ctx.closePath(); ctx.fill(); ctx.stroke(); // small triangular fin
-  ell(6.5 * k, 0, 0.5 * k, 0.5 * k, 0, 'rgba(255,255,255,0.8)');                                         // blowhole spray
-}
-function sprShell(kind, k, rot) {
-  ctx.rotate(rot);
-  if (kind === 0) { // scallop
-    ctx.fillStyle = '#f2e3cf'; ctx.beginPath(); ctx.moveTo(0, 1.6 * k); ctx.arc(0, 1.6 * k, 3 * k, Math.PI * 1.15, Math.PI * 1.85); ctx.closePath(); ctx.fill();
-    ctx.strokeStyle = '#c9a987'; ctx.lineWidth = 0.5; for (let i = -2; i <= 2; i++) { ctx.beginPath(); ctx.moveTo(0, 1.6 * k); ctx.lineTo(i * 1.1 * k, -1.2 * k); ctx.stroke(); }
-  } else if (kind === 1) { // moon snail
-    ell(0, 0, 2 * k, 2 * k, 0, '#e8dac4'); ctx.strokeStyle = '#8a6d52'; ctx.lineWidth = 0.6;
-    ctx.beginPath(); for (let a = 0; a < 9; a += 0.3) { const r = 0.2 * k + a * 0.2 * k; ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r); } ctx.stroke();
-  } else { // blue mussel
-    ell(0, 0, 2.8 * k, 1.2 * k, 0, '#26303c'); ell(-0.5 * k, -0.3 * k, 1.6 * k, 0.4 * k, 0, '#5d7494');
-  }
-}
-function sprUmbrella(k, palette) {
-  ell(3 * k, 3 * k, 8 * k, 8 * k, 0, 'rgba(0,0,0,0.13)');                                        // shade
-  ctx.save(); ctx.translate(10 * k, 5 * k); ctx.rotate(0.3); ctx.fillStyle = palette[2]; ctx.fillRect(-2.5 * k, -5 * k, 5 * k, 10 * k);
-  ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.fillRect(-2.5 * k, -2 * k, 5 * k, 1.2 * k); ctx.fillRect(-2.5 * k, 1.5 * k, 5 * k, 1.2 * k); ctx.restore(); // towel
-  for (let i = 0; i < 8; i++) { ctx.fillStyle = palette[i % 2]; ctx.beginPath(); ctx.moveTo(0, 0); ctx.arc(0, 0, 7 * k, i * Math.PI / 4, (i + 1) * Math.PI / 4); ctx.closePath(); ctx.fill(); }
-  ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 0.6; ctx.beginPath(); ctx.arc(0, 0, 7 * k, 0, 7); ctx.stroke();
-  ell(0, 0, 0.9 * k, 0.9 * k, 0, '#444');
-}
-function sprBuoy(k, t, c1, c2) {
-  const b = Math.sin(t * 2) * 0.4;
-  ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.arc(0, 0, (3.4 + b) * k, 0, 7); ctx.stroke();
-  ell(0, 0, 2.2 * k, 2.2 * k, 0, c1); ell(0, 0, 1.2 * k, 1.2 * k, 0, c2); ell(0, 0, 0.5 * k, 0.5 * k, 0, '#222');
-}
-const UMBRELLA_COLORS = [['#e04b3f', '#ffffff', '#3b82c4'], ['#2f78d6', '#f5d34a', '#e07a3a'], ['#1fa37a', '#ffffff', '#f0a1b8'], ['#f08a24', '#fff3d6', '#5e8bd6']];
-function drawFun(time) {
-  const m = Math.floor(monthPos()), summer = m >= 5 && m <= 7, stormy = W && W.sf > 0.1, k = clamp(sc * 1.7, 1, 2.3);
-  const onRiver = X => S.structures.some(r => r.type === 'river' && Math.abs(X - r.x) < r.w / 2 + 25);
-  // shells along the wrack line
-  for (const sh of SHELLS) {
-    const X = 20 + sh.u * (XL - 40), wid = shoreAt(X) - DUNE_TOE;
-    if (wid < 12 || onRiver(X)) continue;
-    const Y = DUNE_TOE + wid * (0.6 + 0.3 * sh.f);
-    ctx.save(); ctx.translate(px(X), py(Y)); sprShell(Math.floor(sh.k * 3), k * 0.9, sh.f * 6); ctx.restore();
-  }
-  if (summer && !stormy) {
-    const rr = seeded(42);
-    for (let i = 0; i < 9; i++) {
-      const X = 60 + rr() * (XL - 120), wid = shoreAt(X) - DUNE_TOE, onWall = S.structures.some(s => s.type === 'seawall' && X >= s.x1 && X <= s.x2);
-      const nearNest = S.nests.some(n => Math.abs(n.x - X) < 30 + 16 * n.pairs), Yf = 0.45 + rr() * 0.2;
-      if (wid > 45 && !onWall && !nearNest && !onRiver(X)) spr(X, DUNE_TOE + wid * Yf, 1, () => sprUmbrella(k, UMBRELLA_COLORS[i % 4]));
-    }
-  }
-  // lobsters on the jetty rocks, lobster buoys off the tips, seals hauled out on breakwaters
+const SOFT = { cse: new Float32Array(N), csr: new Float32Array(N), de: new Float32Array(N), dr: new Float32Array(N) };
+function softMask() {
+  // multipliers for beach (cross-shore) erosion/recovery and dune erosion/regrowth from dune grass
+  SOFT.cse.fill(1); SOFT.csr.fill(1); SOFT.de.fill(1); SOFT.dr.fill(1);
   for (const s of S.structures) {
-    if (s.type === 'jetty' || (isStem(s) && s.tip - shoreAt(s.x) > 120)) {
-      const nL = !S.show.lobsters ? 0 : s.type === 'jetty' ? 3 : 1;
-      for (let i = 0; i < nL; i++) { const side = i % 2 ? -1 : 1, yy = s.tip - 16 - i * 38; if (yy < shoreAt(s.x) + 25) break;
-        spr(s.x + side * 7, yy, 1, () => { ctx.rotate(side > 0 ? -1.3 : 1.9); sprLobster(k * 0.62, time + i); }, 1); }
-      if (S.show.boats && s.tip < YL - 30) { spr(s.x + 30, s.tip + 12, 1, () => sprBuoy(k, time, '#e04b3f', '#f5d34a')); spr(s.x - 26, s.tip + 22, 1, () => sprBuoy(k, time + 1, '#2f78d6', '#ffffff')); }
+    if (s.type !== 'grass') continue;
+    const i1 = clamp(Math.floor(s.x1 / DX), 0, N - 1), i2 = clamp(Math.floor(s.x2 / DX), 0, N - 1);
+    for (let i = i1; i <= i2; i++) {
+      const alive = S.yls[i] + S.ycs[i] >= DUNE_TOE + 2;
+      if (s.type === 'grass' && alive) { SOFT.cse[i] *= 1 - VEG_B; SOFT.csr[i] *= 1 + VEG_G; SOFT.de[i] *= 0.6; SOFT.dr[i] *= 1.5; }
     }
-    if (S.show.seals && s.type === 'breakwater') spr((s.x1 + s.x2) / 2 + 15 * Math.sin(time * 0.2), s.y + 3, 1, () => sprSeal(k * 0.95, time));
   }
-  const m5 = m >= 4 && m <= 8;
-  for (const c of S.critters) {
-    if ((c.kind === 'boat' || c.kind === 'sail') && (stormy || !S.show.boats)) continue;
-    if (c.kind === 'gull' && !S.show.birds) continue;
-    if (!S.show[{ fish: 'fish', shark: 'sharks', whale: 'whales', porpoise: 'porpoises', crab: 'crabs' }[c.kind]] && ['fish', 'shark', 'whale', 'porpoise', 'crab'].includes(c.kind)) continue;
-    if (c.kind === 'sail' && !m5) continue;
-    const dir = c.vx > 0 ? 1 : -1;
-    if (c.kind === 'crab') { const moving = Math.sin(time * 7 + c.x) > -0.2; spr(c.x, shoreAt(c.x) - c.off, 1, () => sprCrab(k * 0.72, time, moving), Math.min(1, c.life)); continue; }
-    const y = c.kind === 'gull' ? c.y + 18 * Math.sin(time * 1.7 + (c.ph || 0)) : c.y;
-    if (c.kind === 'boat') spr(c.x, y, dir, () => sprLobsterBoat(k, time));
-    else if (c.kind === 'sail') spr(c.x, y, dir, () => sprSailboat(k * 1.1, time));
-    else if (c.kind === 'gull') spr(c.x, y, dir, () => sprGull(k, time + (c.ph || 0)));
-    else if (c.kind === 'fish') spr(c.x, y, dir, () => { for (const [dx, dy] of [[0, 0], [-9, 4], [-7, -5]]) { ctx.save(); ctx.translate(dx * k, dy * k); sprFish(k * c.size * 1.4, time + dx, 'rgba(14, 44, 64, 0.42)'); ctx.restore(); } });
-    else if (c.kind === 'shark') spr(c.x, y, dir, () => sprShark(k, time));
-    else if (c.kind === 'whale') spr(c.x, y, dir, () => sprWhale(k, time));
-    else if (c.kind === 'porpoise') spr(c.x, y, dir, () => sprPorpoise(k, time, c.ph));
-  }
+  return SOFT;
 }
-// ---------- cars on the road (top-down, driving on the right) ----------
-const CAR_COLORS = ['#d23b3b', '#2f6fd6', '#f2c230', '#2e9d63', '#f4f4f4', '#333a40', '#e57c2e', '#8a55c9'];
-let cars = [];
-const roadOut = X => shoreAt(clamp(X, 0, XL)) < 16; // road washed away here
-function updateCars(dt) {
-  if (!(W && W.sf > 0.2) && Math.random() < dt / 2.5 && cars.length < 5) {
-    const dir = Math.random() < 0.5 ? 1 : -1, x = dir > 0 ? -20 : XL + 20;
-    const m = Math.floor(monthPos()), icecream = m >= 5 && m <= 7 && Math.random() < 0.2;
-    cars.push({ x, dir, v: 11 + Math.random() * 7, col: icecream ? '#fbf3e4' : CAR_COLORS[Math.floor(Math.random() * CAR_COLORS.length)], len: icecream ? 15 : 10, ice: icecream, wait: 0 });
-  }
-  for (const c of cars) {
-    const ahead = c.x + c.dir * (c.len / 2 + 6);
-    const gap = cars.some(o => o !== c && o.dir === c.dir && (o.x - c.x) * c.dir > 0 && (o.x - c.x) * c.dir < o.len / 2 + c.len / 2 + 6);
-    if (roadOut(ahead)) { // road washed out: stop, then U-turn into the other lane
-      c.wait += dt; if (c.wait > 0.8) { c.dir = -c.dir; c.wait = 0; }
-    } else if (!gap) c.x += c.dir * c.v * dt;
-  }
-  cars = cars.filter(c => c.x > -40 && c.x < XL + 40);
+function wallMask() {
+  const m = new Uint8Array(N);
+  for (const s of S.structures) if (s.type === 'seawall') for (let i = s.i1; i <= s.i2; i++) m[i] = 1;
+  return m;
 }
-function drawCars() {
-  for (const c of cars) {
-    // driving on the right: rightbound in the lower lane, leftbound in the upper lane
-    const Yc = c.dir > 0 ? 3.2 : 8.8, L = c.len * sc, Wd = Math.max(3, 4.4 * sc), cx = px(c.x), cy = py(Yc);
-    ctx.save(); ctx.translate(cx, cy); if (c.dir < 0) ctx.scale(-1, 1); // front of the car points +x
-    ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(-L / 2 + 1, -Wd / 2 + 1, L, Wd);
-    ctx.fillStyle = c.col; ctx.beginPath(); ctx.roundRect ? ctx.roundRect(-L / 2, -Wd / 2, L, Wd, Math.min(3, Wd / 2)) : ctx.rect(-L / 2, -Wd / 2, L, Wd); ctx.fill();
-    ctx.fillStyle = 'rgba(30, 50, 70, 0.8)'; ctx.fillRect(L * 0.12, -Wd / 2 + 1, L * 0.16, Wd - 2); // windshield (front)
-    ctx.fillRect(-L * 0.36, -Wd / 2 + 1, L * 0.1, Wd - 2);                                          // rear window
-    ctx.fillStyle = '#fff6b0'; ctx.fillRect(L / 2 - 1.5, -Wd / 2 + 0.5, 1.5, 1.2); ctx.fillRect(L / 2 - 1.5, Wd / 2 - 1.7, 1.5, 1.2); // headlights
-    ctx.fillStyle = '#d23b3b'; ctx.fillRect(-L / 2, -Wd / 2 + 0.5, 1.2, 1.2); ctx.fillRect(-L / 2, Wd / 2 - 1.7, 1.2, 1.2);               // tail lights
-    if (c.ice) { ctx.fillStyle = '#f08fb6'; ctx.fillRect(-L * 0.2, -Wd / 2, L * 0.3, Wd); }
-    ctx.restore();
+// height of the dune toe above mean sea level: the beach rises about 1 m every 12 m inland, so a wide beach shields the dune
+const toeZ = width => clamp(BETA_F * width, 1.5, 6);
+const cellOf = X => clamp(Math.floor(X / DX), 0, N - 1);
+function grassMask() {
+  const m = new Uint8Array(N);
+  for (const s of S.structures) if (s.type === 'grass') {
+    const i1 = clamp(Math.floor(s.x1 / DX), 0, N - 1), i2 = clamp(Math.floor(s.x2 / DX), 0, N - 1);
+    for (let i = i1; i <= i2; i++) if (S.yls[i] + S.ycs[i] >= DUNE_TOE + 2) m[i] = 1; // grass drowns once the sea reaches the dune
+  }
+  return m;
+}
+function drawGrass(time) {
+  for (const s of S.structures) if (s.type === 'grass') {
+    ctx.fillStyle = 'rgba(110, 160, 70, 0.35)'; ctx.fillRect(px(s.x1), py(DUNE_TOE + 16), px(s.x2 - s.x1), 20 * sc);
+    const rr = seeded(s.id * 13 + 5), n = Math.round((s.x2 - s.x1) / 3.5);
+    ctx.lineWidth = Math.max(1, 1.1 * sc); ctx.lineCap = 'round';
+    for (let i = 0; i < n; i++) {
+      const X = s.x1 + rr() * (s.x2 - s.x1), Y = DUNE_TOE - 3 + rr() * 19, sway = Math.sin(time * 1.5 + X * 0.05) * 1.2, h = 3 + rr() * 3;
+      ctx.strokeStyle = rr() < 0.5 ? '#4f7a35' : '#7ea85a';
+      ctx.beginPath(); ctx.moveTo(px(X), py(Y)); ctx.lineTo(px(X - 1.5 + sway), py(Y + h)); ctx.moveTo(px(X), py(Y)); ctx.lineTo(px(X + sway * 0.5), py(Y + h * 1.2)); ctx.moveTo(px(X), py(Y)); ctx.lineTo(px(X + 1.5 + sway), py(Y + h)); ctx.stroke();
+    }
   }
 }
 function riverCells(s) {
@@ -801,21 +591,15 @@ function drawRiver(s, time) {
   ctx.fillStyle = '#8eab6b'; ctx.fillRect(px(s.x - bank), py(DUNE_TOE), px(2 * bank), (DUNE_TOE - 12) * sc); // from the road up to the dune line
   const rr = seeded(Math.round(s.x) + 3); ctx.strokeStyle = 'rgba(60, 90, 45, 0.6)'; ctx.lineWidth = 1;
   for (let i = 0; i < 40 + s.w / 2; i++) { const X = s.x - bank + rr() * 2 * bank, Y = 14 + rr() * (DUNE_TOE - 14); ctx.beginPath(); ctx.moveTo(px(X), py(Y)); ctx.lineTo(px(X - 1), py(Y + 5)); ctx.moveTo(px(X), py(Y)); ctx.lineTo(px(X + 2), py(Y + 5)); ctx.stroke(); }
-  // sandy river banks on the beach
-  ctx.fillStyle = '#e4cc98'; ctx.beginPath(); ctx.ellipse(px(s.x), py((DUNE_TOE + sy) / 2), px(hw + 25), Math.max(4, (sy - DUNE_TOE) / 2 * sc), 0, 0, 7); ctx.fill();
-  // the channel: gentle meander, widening at the mouth
-  const wig = X => Math.min(0.15 * s.w, 18) * Math.sin(X * 0.03 + s.x);
-  ctx.fillStyle = '#3f8fb2'; ctx.beginPath();
-  const pts = 10;
-  for (let i = 0; i <= pts; i++) { const Y = sy * i / pts, ww = hw * (1 + 0.5 * Math.pow(i / pts, 3)); const X = s.x - ww + wig(Y) * (1 - i / pts); i ? ctx.lineTo(px(X), py(Y)) : ctx.moveTo(px(X), CH); }
-  for (let i = pts; i >= 0; i--) { const Y = sy * i / pts, ww = hw * (1 + 0.5 * Math.pow(i / pts, 3)); const X = s.x + ww + wig(Y) * (1 - i / pts); ctx.lineTo(px(X), i ? py(Y) : CH); }
-  ctx.closePath(); ctx.fill();
+  // the channel: a straight rectangle from the back of the map to the shoreline
+  const cx1 = px(s.x - hw), cx2 = px(s.x + hw), top = py(sy + 2);
+  ctx.fillStyle = '#3f8fb2'; ctx.fillRect(cx1, top, cx2 - cx1, CH - top);
   ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1; ctx.setLineDash([6, 10]); ctx.lineDashOffset = -time * 12;
-  ctx.beginPath(); for (let i = 0; i <= pts; i++) { const Y = sy * i / pts; const X = s.x + wig(Y) * (1 - i / pts); i ? ctx.lineTo(px(X), py(Y)) : ctx.moveTo(px(X), CH); } ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(px(s.x), CH); ctx.lineTo(px(s.x), top); ctx.stroke();   // flow line
   ctx.setLineDash([]); ctx.lineDashOffset = 0;
   // bridge carrying the road over the river
   // the road continues straight across: pavement over the whole marsh, railings over the water
-  const rx1 = px(s.x - bank), rx2 = px(s.x + bank), bx1 = px(s.x - hw - Math.min(0.15 * s.w, 18) - 10), bx2 = px(s.x + hw + Math.min(0.15 * s.w, 18) + 10);
+  const rx1 = px(s.x - bank), rx2 = px(s.x + bank), bx1 = px(s.x - hw - 8), bx2 = px(s.x + hw + 8);
   ctx.fillStyle = '#6f757b'; ctx.fillRect(rx1, py(12), rx2 - rx1, 12 * sc);
   ctx.fillStyle = '#c9c4b8'; ctx.fillRect(bx1, py(12.8), bx2 - bx1, Math.max(1.5, 1.2 * sc)); ctx.fillRect(bx1, py(0.4) - Math.max(1.5, 1.2 * sc), bx2 - bx1, Math.max(1.5, 1.2 * sc));
   ctx.strokeStyle = 'rgba(255, 230, 140, 0.8)'; ctx.setLineDash([8, 8]); ctx.lineWidth = 1;
@@ -824,8 +608,10 @@ function drawRiver(s, time) {
 }
 function drawDraft() {
   const d = draft; ctx.globalAlpha = 0.75;
-  if (isStem(d)) { drawRocks(d.x, STEM_ROOT, d.x, d.tip, d.type === 'jetty' ? 18 : 10, 1); if (d.type === 'tgroin') drawRocks(d.x - d.head, d.tip, d.x + d.head, d.tip, 11, 2); }
+  if (d.type === 'headland') drawHeadland(d);
+  else if (isStem(d)) { drawRocks(d.x, STEM_ROOT, d.x, d.tip, d.type === 'jetty' ? 18 : 10, 1); if (d.type === 'tgroin') drawRocks(d.x - d.head, d.tip, d.x + d.head, d.tip, 11, 2); }
   else if (d.type === 'breakwater') drawRocks(d.x1, d.y, d.x2, d.y, 14, 3);
+  else if (d.type === 'grass') { ctx.fillStyle = 'rgba(79,138,58,0.45)'; ctx.fillRect(px(d.x1), py(DUNE_TOE + 16), px(d.x2 - d.x1), 20 * sc); }
   else if (d.type === 'seawall') { ctx.strokeStyle = '#b3b8bc'; ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(px(d.x1), py(d.y)); ctx.lineTo(px(d.x2), py(d.y)); ctx.stroke(); }
   ctx.globalAlpha = 1;
 }
@@ -843,21 +629,20 @@ function nestStatus(n) {
 function nestSeasonTick(w) {
   const m = Math.floor(monthPos());
   if (S.lastMonth !== m) {
-    if (m === 4) { S.nests.forEach(n => { n.washed = false; }); if (S.nests.length && S.lastMonth === 3) toast('🐦 The plovers are back! Nesting season has started.'); }
+    if (m === 4) { S.nests.forEach(n => { n.washed = false; }); }
     if (S.lastMonth === 7 && m === 8) {                                    // Sep: count the season's chicks
       const before = S.fledged;
       for (const n of S.nests) {
         const st = nestStatus(n);
         if (!n.washed && st !== 'lost') S.fledged += n.pairs * CHICKS_PER_PAIR * (st === 'risk' ? 0.5 : 1);
       }
-      if (S.nests.length) { const c = Math.round(S.fledged) - Math.round(before); toast(c > 0 ? `🐣 Nesting season over: ${c} chick${c === 1 ? '' : 's'} fledged!` : '😢 Nesting season over: no chicks fledged this year.'); }
     }
     S.lastMonth = m;
   }
   // a storm during nesting season washes over nests on narrow beaches
   if (w && w.sf > 0.4 && inSeason()) for (const n of S.nests) {
     const wid = Math.min(shoreAt(n.x - 20), shoreAt(n.x), shoreAt(n.x + 20)) - DUNE_TOE;
-    if (wid < 25 + 30 * w.surge && !n.washed) { n.washed = true; toast('🌊 The storm washed over a nest!'); }
+    if (wid < 25 + 30 * (w.surge + Math.max(0, w.tide || 0)) && !n.washed) { n.washed = true; toast('🌊 The storm washed over a nest!'); }
   }
 }
 function drawPlover(cx, cy, k) {
@@ -925,7 +710,7 @@ function drawNests() {
     }
   }
 }
-const riverBank = r => r.w / 2 + Math.min(0.15 * r.w, 18) + 36; // half-width of the marsh + bridge around a river
+const riverBank = r => r.w / 2 + 36; // half-width of the marsh + bridge around a river
 const HOUSE_WALLS = ['#f28b82', '#f6d365', '#8ec5e8', '#9fd49a', '#fdfaf2', '#c9b6ea', '#f7b77a', '#7fd3c7'];
 const HOUSE_ROOFS = ['#b23a31', '#3b4f63', '#2f6b4a', '#5a3e2b', '#2f78d6', '#6b3fa0'];
 function drawHouse(w, h, seedX, atRisk) {
@@ -944,17 +729,26 @@ function drawHouse(w, h, seedX, atRisk) {
   ctx.beginPath(); ctx.moveTo(wx + ws / 2, wy); ctx.lineTo(wx + ws / 2, wy + ws); ctx.moveTo(wx, wy + ws / 2); ctx.lineTo(wx + ws, wy + ws / 2); ctx.lineWidth = 0.6; ctx.stroke();
   if (atRisk) { ctx.strokeStyle = '#d95926'; ctx.lineWidth = 2; ctx.setLineDash([4, 2]); ctx.strokeRect(-w / 2 - 3, top - h * 0.66, w + 6, bh + h * 0.7); ctx.setLineDash([]); }
 }
-function houseVisible(h) { return !S.structures.some(r => r.type === 'river' && Math.abs(h.x - r.x) < riverBank(r) + 12); }
+function houseVisible(h) { return !houseBlockedByStructure(h); }
 function houseRaw(h) {
   for (const s of S.structures) if (s.type === 'seawall' && h.x >= s.x1 && h.x <= s.x2) return 'ok';
   const sh = Math.min(shoreAt(h.x - 15), shoreAt(h.x), shoreAt(h.x + 15));
   if (sh < 44) return 'lost';
-  if (sh - DUNE_TOE < 15) return 'risk';
+  const i = cellOf(h.x), dn = Math.max(S.dune[Math.max(0, i - 1)], S.dune[i], S.dune[Math.min(N - 1, i + 1)]);
+  if (sh - DUNE_TOE < 15 || dn > DUNE_W - 6) return 'risk';
   return 'ok';
 }
 function houseStatus(h) { return h.gone ? 'gone' : houseRaw(h); }
 function checkHouses() {
-  for (const h of S.houses) if (!h.gone && houseVisible(h) && houseRaw(h) === 'lost') { h.gone = true; toast('🏚️ Oh no! A house washed away. Use 🔨 Rebuild once there is beach again.'); }
+  let changed = false;
+  for (const h of S.houses) {
+    if (h.gone || !houseVisible(h)) continue;
+    if (houseRaw(h) === 'lost') { h.gone = true; changed = true; toast('🏚️ Oh no! A house washed away. Use 🔨 Rebuild once there is beach again.'); continue; }
+    const i = cellOf(h.x); let o = 0; for (let k = -3; k <= 3; k++) o = Math.max(o, S.over[clamp(i + k, 0, N - 1)]);
+    if (o > 0.9 && h.floodStorm !== S.storms) { h.floodStorm = S.storms; h.flood = S.t; S.floods++; changed = true; toast('🌊 Waves washed over the dune and flooded a house!'); }
+  }
+  if (S.storm && S.overToast !== S.storms) { for (let i = 0; i < N; i++) if (S.over[i] > 0.99) { S.overToast = S.storms; toast('🌊 The dune is gone here: waves are pouring over onto the road!'); break; } }
+  if (changed) refreshTerms();
 }
 function canRebuild(h) { return Math.min(shoreAt(h.x - 15), shoreAt(h.x), shoreAt(h.x + 15)) - DUNE_TOE >= 20 || S.structures.some(s => s.type === 'seawall' && h.x >= s.x1 && h.x <= s.x2); }
 function rebuild(h, quiet) {
@@ -1001,11 +795,15 @@ const TOOLS = [
     svg: '<rect x="2" y="16" width="20" height="6" rx="1" fill="#e2c68c"/><rect x="9.5" y="1" width="5" height="17" rx="2" fill="currentColor"/>' },
   { id: 'breakwater', label: 'Breakwater', hint: '<b>Breakwater:</b> click in the water (drag sideways to set its length) to place a rock barrier parallel to shore.',
     svg: '<rect x="2" y="16" width="20" height="6" rx="1" fill="#e2c68c"/><rect x="4" y="5" width="16" height="4" rx="2" fill="currentColor"/>' },
+  { id: 'headland', label: 'Headland', hint: '<b>Rocky headland:</b> click the water for its tip. A natural point of rock: no sand gets around it, it shelters the beach in its lee, and it reflects waves back onto the beach beside it. Free, because nature built it.',
+    svg: '<rect x="2" y="16" width="20" height="6" rx="1" fill="#e2c68c"/><path d="M6 18 C5 10 8 4 12 3 C16 4 19 10 18 18Z" fill="#7a7068" stroke="currentColor" stroke-width="1.2"/><path d="M8 17 C8 12 10 9 12 8 C14 9 16 12 16 17Z" fill="#6d8f4e"/>' },
+  { id: 'grass', label: 'Dune grass', hint: '<b>Dune grass:</b> drag along the top of the beach to plant beach grass. Its roots hold the dune together, so storms erode that stretch more slowly and it recovers faster. It won\'t stop sand drifting along the shore, and it dies where the sea reaches the dune.',
+    svg: '<rect x="2" y="16" width="20" height="6" rx="1" fill="#e2c68c"/><path d="M5 17 L4 9 M5 17 L6 10 M10 17 L9 7 M10 17 L11.5 8 M15 17 L14 9 M15 17 L16.5 8 M19 17 L18.5 10" stroke="#4f8a3a" stroke-width="1.6" stroke-linecap="round" fill="none"/>' },
   { id: 'seawall', label: 'Seawall', hint: '<b>Seawall:</b> drag along the back of the beach to armour it. The shoreline cannot retreat past the wall.',
     svg: '<rect x="2" y="16" width="20" height="6" rx="1" fill="#e2c68c"/><rect x="2" y="11" width="20" height="4" fill="currentColor"/>' },
   { id: 'nourish', label: 'Add sand', hint: '<b>Add sand:</b> click the beach to dump a nourishment fill (size is set under Storms and sea level).',
     svg: '<rect x="2" y="16" width="20" height="6" rx="1" fill="#e2c68c"/><path d="M5 16 Q12 5 19 16Z" fill="#d7b270" stroke="currentColor" stroke-width="1.4"/>' },
-  { id: 'river', label: 'River', hint: '<b>River:</b> click the beach to add a river. Set its width with the River width slider below; wider rivers bring more sand (about 700 m³ a year per metre of width). The slider also resizes the river you placed last.',
+  { id: 'river', label: 'River', hint: '<b>River:</b> click the beach to add a river. Set its width and how much sand it carries with the River width and River sand sliders below. The sliders also change the river you placed last.',
     svg: '<rect x="2" y="16" width="20" height="6" rx="1" fill="#e2c68c"/><path d="M11 23 C8 18 15 15 11 9 M11 9 l-3 -5" stroke="#2f82ad" stroke-width="3.2" fill="none" stroke-linecap="round"/>' },
   { id: 'nest', label: 'Nesting area', hint: '<b>Nesting area:</b> click the upper beach to rope off a shorebird nesting area (piping plovers and least terns nest on open sand just in front of the dunes, May–August).',
     svg: '<rect x="2" y="16" width="20" height="6" rx="1" fill="#e2c68c"/><path d="M4 16V9M20 16V9M4 10h16" stroke="currentColor" stroke-width="1.4" stroke-dasharray="2 1.5" fill="none"/><ellipse cx="12" cy="13" rx="4" ry="2.6" fill="#d8c7a0" stroke="currentColor" stroke-width="1"/><circle cx="15.2" cy="11" r="1.7" fill="#d8c7a0" stroke="currentColor" stroke-width="1"/><path d="M13.6 12.3h3" stroke="#1b1b1b" stroke-width="1.2"/>' },
@@ -1033,8 +831,8 @@ function worldFromEvent(e) {
 function snapX(X) { return clamp(Math.round(X / DX) * DX, DX, XL - DX); }
 function makeDraft(tool, p) {
   const sh = shoreAt(p.X);
-  if (tool === 'groin' || tool === 'tgroin' || tool === 'jetty') {
-    const def = tool === 'jetty' ? 260 : tool === 'tgroin' ? 90 : 80;
+  if (tool === 'groin' || tool === 'tgroin' || tool === 'jetty' || tool === 'headland') {
+    const def = tool === 'jetty' ? 260 : tool === 'headland' ? 200 : tool === 'tgroin' ? 90 : 80;
     const x = snapX(p.X), tip = p.Y > sh + 15 ? p.Y : sh + def;
     return { type: tool, x, tip: clamp(tip, sh + 10, YL - 20), head: 45, y0: p.Y, userTip: p.Y > sh + 15 };
   }
@@ -1042,6 +840,7 @@ function makeDraft(tool, p) {
     const yb = clamp(Math.max(p.Y, sh + 40), sh + 30, YL - 30);
     return { type: 'breakwater', xs: p.X, x1: clamp(p.X - 110, 0, XL), x2: clamp(p.X + 110, 0, XL), y: yb, dragged: false };
   }
+  if (tool === 'grass') return { type: 'grass', xs: p.X, x1: clamp(p.X - 150, 0, XL), x2: clamp(p.X + 150, 0, XL), y: DUNE_TOE + 6, dragged: false };
   if (tool === 'seawall') {
     const yw = p.Y < sh - 5 && p.Y > DUNE_TOE - 5 ? p.Y : DUNE_TOE + 2;
     return { type: 'seawall', xs: p.X, x1: clamp(p.X - 150, 0, XL), x2: clamp(p.X + 150, 0, XL), y: yw, dragged: false };
@@ -1094,7 +893,7 @@ function eraseAt(p) {
   for (const s of S.structures) {
     let d = 1e9;
     if (isStem(s)) { d = seg(s.x, STEM_ROOT, s.x, s.tip); if (s.type === 'tgroin') d = Math.min(d, seg(s.x - s.head, s.tip, s.x + s.head, s.tip)); }
-    else if (s.type === 'breakwater' || s.type === 'seawall') d = seg(s.x1, s.y, s.x2, s.y);
+    else if (s.type === 'breakwater' || s.type === 'seawall' || s.type === 'grass') d = seg(s.x1, s.y, s.x2, s.y);
     else if (s.type === 'river') d = seg(s.x, 0, s.x, shoreAt(s.x));
     if (d < bd) { bd = d; best = s; }
   }
@@ -1108,7 +907,7 @@ cv.addEventListener('pointerdown', e => {
   if (S.tool === 'inspect') return;
   if (S.tool === 'erase') { eraseAt(p); return; }
   if (S.tool === 'nourish') { nourish(snapX(p.X)); return; }
-  if (S.tool === 'river') { addStructure({ type: 'river', x: snapX(p.X), w: S.riverW, q: 700 * S.riverW }); toast(`🏞️ A new river, ${S.riverW} m wide, bringing ${fmtVol(700 * S.riverW)} m³ of sand a year.`); return; }
+  if (S.tool === 'river') { addStructure({ type: 'river', x: snapX(p.X), w: S.riverW, q: S.rq }); toast(`🏞️ A new river, ${S.riverW} m wide, bringing ${fmtVol(S.rq)} m³ of sand a year.`); return; }
   if (S.tool === 'build') {
     const h = S.houses.filter(h => houseVisible(h)).sort((a, b) => Math.abs(a.x - p.X) - Math.abs(b.x - p.X))[0];
     if (h && Math.abs(h.x - p.X) < 50) { if (h.gone) rebuild(h); else toast('🏡 That house is still standing.'); }
@@ -1133,12 +932,20 @@ function showTip(e, p) {
   const nest = S.nests.find(n => Math.abs(n.x - p.X) < 14 + 16 * n.pairs && p.Y < DUNE_TOE + 40 && p.Y > DUNE_TOE - 10);
   const nestTxt = nest ? `<br><b>Shorebird nesting area</b>: ${nest.pairs} plover pair${nest.pairs > 1 ? 's' : ''}, ${{ ok: 'safe', risk: 'at risk (narrow beach)', lost: 'lost (no dry beach)' }[nestStatus(nest)]}${nest.washed && inSeason() ? ', washed out this season' : ''}` : '';
   const where = `<span class="mono">x = ${Math.round(p.X)} m</span>`;
+  const grass = S.structures.find(st => st.type === 'grass' && p.X >= st.x1 && p.X <= st.x2);
+  const grassTxt = grass ? (shoreAt(p.X) >= DUNE_TOE + 2 ? '<br>🌾 Dune grass here: storms erode the beach and dune 40% slower' : '<br>🌾 Dune grass here has been washed out') : '';
   const onWall = S.structures.find(st => st.type === 'seawall' && p.X >= st.x1 && p.X <= st.x2 && Math.abs(p.Y - st.y) < 8);
-  const onRock = S.structures.find(st => (isStem(st) && Math.abs(p.X - st.x) < 12 && p.Y > STEM_ROOT && p.Y < st.tip + 6) || (st.type === 'breakwater' && p.X > st.x1 && p.X < st.x2 && Math.abs(p.Y - st.y) < 10) || (st.type === 'tgroin' && Math.abs(p.Y - st.tip) < 10 && Math.abs(p.X - st.x) < st.head));
+  const onHead = S.structures.find(st => st.type === 'headland' && Math.abs(p.X - st.x) < 45 && p.Y < st.tip + 6) ;
+  const cell = cellOf(p.X), dn = S.dune[cell], faceY = DUNE_TOE - dn;
+  const duneTxt = dn > 0.6 ? `<br>✂️ Storm waves have cut the dune back ${dn.toFixed(1)} m${dn >= DUNE_W - 0.5 ? ' (it is gone!)' : ''}` : '';
+  const overTxt = S.over[cell] > 0.05 ? '<br>🌊 Waves have washed over the dune here' : '';
+  const onRock = S.structures.find(st => (isStem(st) && st.type !== 'headland' && Math.abs(p.X - st.x) < 12 && p.Y > STEM_ROOT && p.Y < st.tip + 6) || (st.type === 'breakwater' && p.X > st.x1 && p.X < st.x2 && Math.abs(p.Y - st.y) < 10) || (st.type === 'tgroin' && Math.abs(p.Y - st.tip) < 10 && Math.abs(p.X - st.x) < st.head));
   const river = S.structures.find(st => st.type === 'river' && Math.abs(p.X - st.x) < st.w / 2 && p.Y < sh);
-  if (onRock) {
+  if (onHead) {
+    tip.innerHTML = `⛰️ <b>Rocky headland</b> · ${where}<br>Blocks waves from its side, so the beach in its lee is calm, and no sand gets around it. Waves bounce off it, making them bigger on the beach just beside it.`;
+  } else if (onRock) {
     const name = { groin: 'Groin', jetty: 'Jetty', tgroin: 'T-groin (spur)', breakwater: 'Breakwater' }[onRock.type];
-    tip.innerHTML = `🪨 <b>${name}</b> · ${where}` + (isStem(onRock) ? `<br>Sticks out ${Math.max(0, onRock.tip - sh).toFixed(0)} m past the shoreline<br>Sand bypassing it: ${Math.round((onRock.byp ?? 1) * 100)}%` : `<br>${(onRock.y - sh).toFixed(0)} m offshore`);
+    tip.innerHTML = `🪨 <b>${name}</b> · ${where}` + (isStem(onRock) ? `<br>Sticks out ${Math.max(0, onRock.tip - sh).toFixed(0)} m past the shoreline<br>Sand bypassing it: ${Math.round((onRock.byp ?? 1) * 100)}%` : `<br>${(onRock.y - sh).toFixed(0)} m offshore`) + (onRock.type === 'jetty' ? '<br>Reflects waves onto the beach just updrift' : '');
   } else if (onWall) {
     tip.innerHTML = `🧱 <b>Seawall</b> · ${where}<br>Dry beach in front: ${Math.max(0, sh - onWall.y).toFixed(0)} m`;
   } else if (river) {
@@ -1147,9 +954,13 @@ function showTip(e, p) {
     const d = p.Y - sh, depth = Aprof() * Math.pow(d, 2 / 3), inSurf = d < surfWidthAt(p.X);
     tip.innerHTML = `🌊 <b>Water</b> · ${where}<br>${d.toFixed(0)} m from the shoreline, about ${depth.toFixed(1)} m deep<br>${inSurf ? `In the surf zone: waves breaking at ${(Hc[i] || 0).toFixed(2)} m<br>Sand drifting ${fmtQ(q)}` : 'Beyond the breakers'}`;
   } else if (p.Y < DUNE_TOE) {
-    tip.innerHTML = `${p.Y < 14 ? '🚗 <b>Road</b>' : p.Y < 42 ? '🏡 <b>Houses</b>' : '🌾 <b>Dunes</b>'} · ${where}<br>Dry beach in front: ${Math.max(0, width).toFixed(0)} m${nestTxt}`;
+    const hs = S.houses.find(h => Math.abs(h.x - p.X) < 20);
+    const lot = p.Y >= 14 && p.Y < 42 && hs ? (hs.gone ? '🏚️ <b>Empty lot</b>' : S.t - (hs.flood ?? -9) < 0.6 ? '🏡 <b>House</b> (flooded by overwash)' : '🏡 <b>House</b>') : null;
+    const wid = sh - faceY;
+    tip.innerHTML = `${p.Y < 14 ? '🚗 <b>Road</b>' : lot ? lot : p.Y < 42 ? '🏡 <b>Houses</b>' : p.Y > faceY ? '🏖️ <b>Bare sand</b> where the dune was' : '🌾 <b>Dunes</b>'} · ${where}<br>Dry beach in front of the dune: ${Math.max(0, wid).toFixed(0)} m${duneTxt}${overTxt}${grassTxt}${nestTxt}`;
   } else {
-    tip.innerHTML = `🏖️ <b>Beach</b> · ${where}<br>Dry beach ${Math.max(0, width).toFixed(0)} m wide (${(sh - Y0 >= 0 ? '+' : '−') + Math.abs(sh - Y0).toFixed(1)} m since the start)<br>Sand drifting ${fmtQ(q)}${nestTxt}`;
+    const wid = sh - faceY, ht = Math.max(0, wid - S.tideAmp / BETA_F);
+    tip.innerHTML = `🏖️ <b>Beach</b> · ${where}<br>Dry beach ${Math.max(0, wid).toFixed(0)} m wide at mid-tide, ${ht.toFixed(0)} m at high tide (${(sh - Y0 >= 0 ? '+' : '−') + Math.abs(sh - Y0).toFixed(1)} m since the start)<br>Sand drifting ${fmtQ(q)}${duneTxt}${grassTxt}${nestTxt}`;
   }
   tip.style.left = Math.min(e.clientX - r.left, r.width - 280) + 'px'; tip.style.top = Math.min(e.clientY - r.top, r.height - 130) + 'px';
   tip.hidden = false;
@@ -1184,23 +995,20 @@ function toCustom() { if (S.mode !== 'custom') { const b = siteBase(); S.H0 = b.
 h0.addEventListener('input', () => { toCustom(); S.H0 = +h0.value; });
 per.addEventListener('input', () => { toCustom(); S.T = +per.value; });
 slr.addEventListener('input', () => { S.slr = +slr.value; refreshTerms(); });
+$('tide').addEventListener('input', () => { S.tideAmp = +$('tide').value; });
+function setSeg(id, attr, v) { $(id).querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', b.dataset[attr] === v)); }
+$('timingSeg').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { S.timing = b.dataset.timing; setSeg('timingSeg', 'timing', S.timing); } });
 vol.addEventListener('input', () => { S.vol = +vol.value; });
+$('rq').addEventListener('input', () => {
+  S.rq = +$('rq').value;
+  const last = [...S.structures].reverse().find(s => s.type === 'river');
+  if (last) { last.q = S.rq; refreshTerms(true); }
+});
 $('rw').addEventListener('input', () => {
   S.riverW = +$('rw').value;
   const last = [...S.structures].reverse().find(s => s.type === 'river');
-  if (last) { last.w = S.riverW; last.q = 700 * S.riverW; refreshTerms(true); }
+  if (last) { last.w = S.riverW; refreshTerms(true); }
 });
-document.querySelectorAll('.showall').forEach(b => b.addEventListener('click', () => {
-  const on = b.dataset.showall === '1';
-  for (const key of Object.keys(S.show)) S.show[key] = on;
-  document.querySelectorAll('.showbtn').forEach(x => x.setAttribute('aria-pressed', on));
-  if (!on) S.critters = S.critters.filter(c => !['shark', 'whale', 'porpoise', 'crab'].includes(c.kind));
-}));
-document.querySelectorAll('.showbtn').forEach(b => b.addEventListener('click', () => {
-  const key = b.dataset.show; S.show[key] = !S.show[key]; b.setAttribute('aria-pressed', S.show[key]);
-  const kindOf = { sharks: 'shark', whales: 'whale', porpoises: 'porpoise', crabs: 'crab' }[key];
-  if (kindOf && !S.show[key]) S.critters = S.critters.filter(c => c.kind !== kindOf);
-}));
 $('btnRebuild').addEventListener('click', () => {
   const gone = S.houses.filter(h => h.gone && houseVisible(h));
   if (!gone.length) { toast('🏡 All the houses are standing.'); return; }
@@ -1241,8 +1049,11 @@ $('btnNoreaster').addEventListener('click', () => startStorm('noreaster'));
 $('btnTropical').addEventListener('click', () => startStorm('tropical'));
 function startStorm(k) {
   if (S.storm) return;
-  const def = STORMS[k]; S.storm = { def, t0: S.t, dur: def.days / 365 }; S.storms++;
-  toast(k === 'noreaster' ? '🌬️ Nor\'easter incoming! Batten down the hatches.' : '🌀 Tropical storm incoming!');
+  const def = STORMS[k], dur = def.days / 365, tPeak = S.t + dur / 2;
+  const tHW = S.timing === 'high' ? tPeak : S.timing === 'low' ? tPeak + TIDE_P / 2 : tPeak + Math.random() * TIDE_P;
+  S.storm = { def, t0: S.t, dur, tHW }; S.storms++;
+  const when = S.timing === 'high' ? ' It peaks at high tide!' : S.timing === 'low' ? ' Luckily it peaks at low tide.' : '';
+  toast((k === 'noreaster' ? '🌬️ Nor\'easter incoming!' : '🌀 Tropical storm incoming!') + when);
   $('btnNoreaster').disabled = $('btnTropical').disabled = true;
   setPlaying(true);
   refreshTerms(true);
@@ -1361,8 +1172,10 @@ const PLACES = {
     blurb: 'Phippsburg. A south-facing beach between the Kennebec River (E end) and the Morse River (W end). Fox Island, a rock island just offshore, acts like a natural breakwater with a tombolo that comes and goes. A riprap seawall at Hunnewell Beach causes erosion at its end. The beach swings hundreds of feet as the river channels move, which the model can\'t capture.' }
 };
 function syncSliders() {
-  slr.value = S.slr; vol.value = S.vol; $('rw').value = S.riverW; k1.value = S.K1; d50.value = S.d50; hsIn.value = S.hstar;
+  slr.value = S.slr; vol.value = S.vol; $('rw').value = S.riverW; $('rq').value = S.rq; k1.value = S.K1; d50.value = S.d50; hsIn.value = S.hstar;
   $('nrm').value = S.normal; $('trn').value = S.turn; $('expo').value = S.expo;
+  $('tide').value = S.tideAmp;
+  setSeg('timingSeg', 'timing', S.timing);
   updateFrameNote();
 }
 const chips = $('placeChips');
@@ -1385,7 +1198,7 @@ function loadPlace(k) {
 }
 
 function resetBeach() {
-  S.alert = null; S.houses.forEach(h => { h.gone = false; }); S.t = 0; S.eta = 0; S.fills = []; S.sandAdded = 0; S.storms = 0; S.storm = null; S.fledged = 0; S.lastMonth = -1; S.nests.forEach(n => { n.washed = false; });
+  S.alert = null; S.houses.forEach(h => { h.gone = false; h.flood = -9; h.floodStorm = -1; }); S.dune.fill(0); S.over.fill(0); S.overToast = -1; S.floods = 0; S.t = 0; S.eta = 0; S.fills = []; S.sandAdded = 0; S.storms = 0; S.storm = null; S.fledged = 0; S.lastMonth = -1; S.nests.forEach(n => { n.washed = false; });
   $('btnNoreaster').disabled = $('btnTropical').disabled = false;
   W = currentWaves();
   const yeq = -W_CS * (0.068 * W.Hb) / (BERM + 1.28 * W.Hb);
@@ -1394,15 +1207,16 @@ function resetBeach() {
 }
 
 // ---------- equations panel ----------
-const HX = { blue: '2F78D6', orange: 'D95926', purple: '8A55C9', slate: '7A8790', green: '1FA37A', amber: 'C98500', teal: '1690A0' };
+const HX = { grass: '4F8A3A', blue: '2F78D6', orange: 'D95926', purple: '8A55C9', slate: '7A8790', green: '1FA37A', amber: 'C98500', teal: '1690A0', navy: '3A5FA8', rock: '6B625A', sand: 'B07A2A', money: '2E7D32' };
 const col = (c, s) => String.raw`{\color{#${c}}{${s}}}`;
 function activeSet() {
   const t = new Set(S.structures.map(s => s.type));
   return {
-    groin: t.has('groin') || t.has('jetty') || t.has('tgroin'),
+    groin: t.has('groin') || t.has('jetty') || t.has('tgroin') || t.has('headland'),
     breakwater: t.has('breakwater') || t.has('tgroin'),
-    seawall: t.has('seawall'), river: t.has('river'), fill: S.fills.length > 0,
-    storm: S.storms > 0, slr: S.slr > 0
+    seawall: t.has('seawall'), grass: t.has('grass'), river: t.has('river'), fill: S.fills.length > 0,
+    storm: S.storms > 0, tide: S.storms > 0, slr: S.slr > 0,
+    coast: t.has('headland') || t.has('jetty')
   };
 }
 function masterTeX(a) {
@@ -1411,15 +1225,17 @@ function masterTeX(a) {
   if (a.slr) src += col(HX.teal, String.raw`-\,\frac{W_*}{D}\frac{d\eta}{dt}`);
   let q = String.raw`a_1 \sin 2(\theta_b-\phi)`;
   if (a.breakwater) q += col(HX.purple, String.raw`\;-\;a_2\cos(\theta_b-\phi)\,\frac{\partial H_b}{\partial x}`);
-  const surge = a.storm ? col(HX.amber, '+\\,S') : '';
+  const surge = (a.storm ? col(HX.amber, '+\\,S') : '') + (a.tide ? col(HX.navy, '+\\,\\eta_T') : '');
   let lines = [
     String.raw`y &= y_s + y_c`,
     String.raw`\frac{\partial y_s}{\partial t} &= -\frac{1}{D}\frac{\partial Q}{\partial x}` + src,
     String.raw`Q &= \left(H_b^2 C_g\right)_b\left[${q}\right]`,
-    String.raw`\frac{\partial y_c}{\partial t} &= k\,\left(y_{eq}-y_c\right),\quad y_{eq} = -W\,\frac{0.068H_b${surge}}{B+1.28H_b}`
+    String.raw`\frac{\partial y_c}{\partial t} &= ${a.grass ? col(HX.grass, 'k_v') : 'k'}\,\left(y_{eq}-y_c\right),\quad y_{eq} = -W\,\frac{0.068H_b${surge}}{B+1.28H_b}`,
+    String.raw`\frac{dx_d}{dt} &= ${a.grass ? col(HX.grass, 'm_d') : ''}\frac{4C_s}{T(z_c-z_t)}\left(TWL-z_t\right)_+^2,\quad TWL = \eta${a.tide ? col(HX.navy, '+\\eta_T') : ''}${a.storm ? col(HX.amber, '+S') : ''}+R_2`
   ];
   const bc = [];
   if (a.groin) bc.push(col(HX.orange, String.raw`Q(x_g) = \mathrm{BYP}_g\,Q`));
+  if (a.coast) bc.push(col(HX.rock, String.raw`H_b \to K\,H_b`));
   if (a.seawall) bc.push(col(HX.slate, String.raw`y \ge y_w`));
   if (bc.length) lines.push(String.raw`&\text{with}\;\; ` + bc.join(String.raw`,\;\; `));
   return String.raw`\begin{aligned}` + lines.join(String.raw`\\[4pt]`) + String.raw`\end{aligned}`;
@@ -1441,14 +1257,18 @@ const TERMS = [
     tex: String.raw`\begin{gathered}\frac{\partial y_c}{\partial t}=k\,(y_{eq}-y_c)\\ y_{eq}=-W\frac{0.068H_b+S}{B+1.28H_b}\end{gathered}`,
     text: 'Big waves pull sand off the beach into an offshore bar, so the beach narrows; calm waves push it back. Erosion is fast (\\(k \\approx 150\\) per year, days) and recovery is slow (\\(k \\approx 8\\) per year, weeks). This is why beaches are narrower in winter.',
     live: [['\\(y_{eq}\\) now', 'yeq'], ['\\(y_c\\) now', 'yc']] },
+  { key: 'dune', core: true, c: 'blue', title: 'Dunes and wave run-up', tag: '✓ always on',
+    tex: String.raw`\begin{gathered}TWL = \eta + \eta_T + S + R_2\\ R_2 \approx 1.1\sqrt{H_0L_0}\,\big(0.35\,\beta_f\;+\\ \tfrac12\sqrt{0.563\,\beta_f^2+0.004}\,\big)\\ \frac{dx_d}{dt} = \frac{4C_s\left(TWL-z_t\right)_+^2}{T\,(z_c-z_t)}\end{gathered}`,
+    text: 'Waves run up the beach past the waterline (\\(R_2\\), Stockdon et al. 2006). When the total water level climbs above the dune toe \\(z_t\\), waves bite into the dune (Larson et al. 2004; \\(C_s\\) fit to Camp Ellis). A wide beach lifts the toe higher, so it protects the dune. Once the dune is gone, waves wash over onto the road and houses. Between storms, wind slowly rebuilds the dune.',
+    live: [['Run-up \\(R_2\\)', 'R2'], ['Water level now', 'twl'], ['Most dune lost', 'duneMax'], ['Dune gone along', 'overLen']] },
   { key: 'smooth', core: true, c: 'blue', title: 'Why bumps spread out', tag: 'the big idea',
     tex: String.raw`\frac{\partial y}{\partial t} \approx \varepsilon\,\frac{\partial^2 y}{\partial x^2},\qquad \varepsilon = \frac{2Q_0}{D}`,
     text: 'For small angles the drift equation turns into the heat equation (Pelnard-Considère, 1956). A bump of sand spreads out along the shore the way heat spreads along a metal bar.',
     live: [['\\(\\varepsilon\\)', 'eps'], ['A 500 m bump spreads in', 'tspread']] },
   { key: 'groin', c: 'orange', title: 'Groins, spurs and jetties', tag: 'from your structures',
     tex: String.raw`\begin{gathered}Q(x_g) = \mathrm{BYP}\cdot Q\\ \mathrm{BYP} = 1-\frac{y_G}{y_B},\qquad y_B = \left(\frac{h_b}{A}\right)^{3/2}\end{gathered}`,
-    text: 'A groin blocks the part of the surf zone it reaches, so sand piles up on the updrift side and the downdrift side starves. \\(y_G\\) is how far it sticks out past the shoreline and \\(y_B\\) is the surf-zone width. Once sand reaches the tip, it bypasses. Waves are also calmer in its lee (Bakker, 1968).',
-    live: [['Bypassing', 'byp']], lock: 'Add a groin, spur or jetty' },
+    text: 'A groin blocks the part of the surf zone it reaches, so sand piles up on the updrift side and the downdrift side starves. \\(y_G\\) is how far it sticks out past the shoreline and \\(y_B\\) is the surf-zone width. Once sand reaches the tip, it bypasses. Waves are also calmer in its lee (Bakker, 1968). Long jetties and headlands reflect waves too, making them up to 25% bigger just updrift. A headland is a giant natural groin: \\(\\mathrm{BYP}=0\\).',
+    live: [['Bypassing', 'byp']], lock: 'Add a groin, spur, jetty or headland' },
   { key: 'breakwater', c: 'purple', title: 'Breakwater shadow', tag: 'from your structures',
     tex: String.raw`\begin{gathered}Q = \left(H_b^2C_g\right)_b\big[a_1\sin2(\theta_b-\phi)\\ \qquad -\,a_2\cos(\theta_b-\phi)\,\frac{\partial H_b}{\partial x}\big]\\ H_b \to K_d\,H_b\ \text{(in its shadow)}\end{gathered}`,
     text: 'Behind a breakwater the waves are smaller (\\(K_d \\lt 1\\)) because they only reach it by bending around the ends (diffraction). Sand flows from where waves are big to where they are small, building a bulge called a salient. If it reaches the breakwater it becomes a tombolo.',
@@ -1457,9 +1277,13 @@ const TERMS = [
     tex: String.raw`y(x,t) \ge y_w`,
     text: 'A seawall stops the shoreline from moving landward, but it does not stop sand from leaving. The beach in front narrows and can disappear. This is called coastal squeeze.',
     live: [['Wall with no dry beach', 'wallbare']], lock: 'Add a seawall' },
+  { key: 'grass', c: 'grass', title: 'Dune grass', tag: 'from your planting',
+    tex: String.raw`\begin{gathered}k_v = (1-\beta)\,k \ \text{(erosion)}\\ k_v = (1+\gamma)\,k \ \text{(recovery)}\\ m_d = 0.6\ \text{(dune cut)}\\ \beta = 0.4,\quad \gamma = 0.3\end{gathered}`,
+    text: 'Beach grass roots bind the dune and its stems trap blowing sand. On planted stretches, storms pull sand off the beach and cut the dune more slowly, and both rebuild faster afterwards. Grass does not stop sand drifting along the shore, and it dies where the sea reaches the dune.',
+    live: [['Planted', 'grassLen'], ['Still growing', 'grassOk']], lock: 'Plant dune grass' },
   { key: 'river', c: 'green', title: 'River sand supply', tag: 'from your rivers',
     tex: String.raw`q(x,t) = Q_r\,\delta(x-x_r)`,
-    text: 'A river delivers new sand at one point along the shore. The drift then spreads it out, so beaches downdrift of a river mouth are fed.',
+    text: 'A river delivers new sand at one point along the shore. The drift then spreads it out, so beaches downdrift of a river mouth are fed. Use the River sand slider to see what happens when a river brings more sand, or less (for example after a dam traps it upstream).',
     live: [['Supply', 'qr']], lock: 'Add a river' },
   { key: 'fill', c: 'green', title: 'Beach nourishment', tag: 'from your fills',
     tex: String.raw`q(x,t) = \frac{V}{\sqrt{2\pi}\,\sigma}\,e^{-(x-x_n)^2/2\sigma^2}\,\delta(t-t_n)`,
@@ -1469,12 +1293,20 @@ const TERMS = [
     tex: String.raw`y_{eq} = -W\,\frac{0.068H_b + S}{B+1.28H_b}`,
     text: 'During a storm the water rises by the surge \\(S\\) and the waves are huge, so the equilibrium beach sits far landward. The beach races toward it for a few days, then slowly recovers as sand comes back from the bar.',
     live: [['Surge \\(S\\)', 'surge'], ['Storms so far', 'nstorm']], lock: 'Send a storm' },
+  { key: 'tide', c: 'navy', title: 'Tides and storm timing', tag: 'from your storms',
+    tex: String.raw`\eta_T(t) = A\cos\frac{2\pi\,(t-t_{HW})}{12.42\ \mathrm{h}}`,
+    text: 'Maine\'s tides rise and fall about 2.6 m twice a day. During a storm the sim follows the tide hour by hour: the same surge on top of high tide reaches metres further up the beach than at low tide, so a storm that peaks at high tide cuts the dune much harder. Between storms the tide averages out.',
+    live: [['Tide height \\(A\\)', 'tideR'], ['Tide now', 'tideNow'], ['Storm peaks at', 'timing']], lock: 'Send a storm' },
+  { key: 'coast', c: 'rock', title: 'Waves blocked and focused by the coast', tag: 'from your headlands and jetties',
+    tex: String.raw`\begin{gathered}H_b \to K\,H_b\\ K = \underbrace{\left(1-0.8\,S_h\right)}_{\text{blocked}}\;\underbrace{\left(1+0.25\,e^{-d/70\,\mathrm{m}}\right)}_{\text{focused}}\end{gathered}`,
+    text: 'A rocky headland blocks waves coming from its side: in its shadow (\\(S_h \\to 1\\)) the waves are small and the beach is calm, and no sand gets around it (\\(\\mathrm{BYP}=0\\)). Waves that hit a headland or long jetty bounce back and add to the incoming waves, so the beach within about 200 m updrift (distance \\(d\\)) gets bigger waves and erodes faster, as beside the Camp Ellis jetty.',
+    live: [['Headlands', 'nhead'], ['Biggest wave boost', 'kmax'], ['Calmest spot', 'kd']], lock: 'Add a headland or a jetty' },
   { key: 'slr', c: 'teal', title: 'Sea-level rise (Bruun rule)', tag: 'from the sea-level slider',
     tex: String.raw`\frac{\partial y_s}{\partial t} \mathrel{+}= -\frac{W_*}{h_*+B}\,\frac{d\eta}{dt}`,
     text: 'As the sea rises, the whole beach profile shifts up and landward to keep its shape. Each millimetre of rise moves the shoreline back by \\(W_*/(h_*+B)\\) millimetres, often 50 to 100 times more.',
     live: [['Rise rate', 'slrr'], ['Retreat', 'slrret'], ['Total rise', 'eta']], lock: 'Raise the sea level' }
 ];
-const COLVAR = { blue: 'var(--blue)', orange: 'var(--orange)', purple: 'var(--purple)', slate: 'var(--slate)', green: 'var(--green)', amber: 'var(--amber)', teal: 'var(--teal)' };
+const COLVAR = { grass: 'var(--grass)', blue: 'var(--blue)', orange: 'var(--orange)', purple: 'var(--purple)', slate: 'var(--slate)', green: 'var(--green)', amber: 'var(--amber)', teal: 'var(--teal)', navy: '#3a5fa8', rock: '#7a7068', sand: '#b07a2a', money: '#2e7d32' };
 let lastSig = '', firstBuild = true;
 function typeset(els) {
   if (window.MathJax && MathJax.typesetPromise) { MathJax.typesetClear(els); return MathJax.typesetPromise(els).catch(() => {}); }
@@ -1541,16 +1373,26 @@ function updateLive() {
     H0: `${w.H0.toFixed(2)} m`, Hb: `${w.Hb.toFixed(2)} m`, ang: `${Math.abs(w.thDeg).toFixed(0)}° → ${Math.abs(w.thb * 180 / Math.PI).toFixed(1)}°`,
     yB: `${Math.pow(w.hb / A, 1.5).toFixed(0)} m`, yeq: `${(yeqAvg / N).toFixed(1)} m`, yc: `${(ycAvg / N).toFixed(1)} m`,
     eps: `${fmtVol(eps)} m²/yr`, tspread: eps > 1 ? `${(500 * 500 / (4 * eps) * 12).toFixed(1)} months` : '—',
-    byp: stems.length ? stems.map(s => `${s.type === 'jetty' ? 'J' : 'G'}@${s.x}m ${Math.round((s.byp ?? 1) * 100)}%`).join(' · ') : '—',
+    byp: stems.length ? stems.map(s => `${s.type === 'jetty' ? 'J' : s.type === 'headland' ? 'H' : 'G'}@${s.x}m ${Math.round((s.byp ?? 1) * 100)}%`).join(' · ') : '—',
+    grassLen: `${S.structures.filter(g => g.type === 'grass').reduce((a, g) => a + (clamp(Math.floor(g.x2 / DX), 0, N - 1) - clamp(Math.floor(g.x1 / DX), 0, N - 1) + 1) * DX, 0)} m`,
+    grassOk: `${(() => { const m = grassMask(); let c = 0; for (const s of S.structures) if (s.type === 'grass') for (let i = clamp(Math.floor(s.x1 / DX), 0, N - 1); i <= clamp(Math.floor(s.x2 / DX), 0, N - 1); i++) c += m[i]; return c * DX; })()} m`,
     kd: kdMin.toFixed(2), salient: shape, wallbare: `${bare} m`,
     qr: S.structures.filter(s => s.type === 'river').map(s => `${fmtVol(s.q)} m³/yr`).join(', ') || '—',
     nfill: String(S.fills.length), vfill: `${fmtVol(S.sandAdded)} m³`,
     surge: `${w.surge.toFixed(2)} m`, nstorm: String(S.storms),
-    slrr: `${S.slr.toFixed(1)} mm/yr`, slrret: `${(S.slr * 1e-3 * Wstar() / Dd).toFixed(2)} m/yr`, eta: `${(S.eta * 1000).toFixed(0)} mm`
+    slrr: `${S.slr.toFixed(1)} mm/yr`, slrret: `${(S.slr * 1e-3 * Wstar() / Dd).toFixed(2)} m/yr`, eta: `${(S.eta * 1000).toFixed(0)} mm`,
+    R2: `${(w.R2 || 0).toFixed(1)} m`, twl: `${S.twl.toFixed(1)} m above sea level`,
+    duneMax: (() => { let m = 0; for (let i = 0; i < N; i++) m = Math.max(m, S.dune[i]); return m < 0.1 ? 'none' : `${m.toFixed(1)} m of ${DUNE_W} m`; })(),
+    overLen: (() => { let c = 0; for (let i = 0; i < N; i++) if (S.dune[i] >= DUNE_W - 0.5) c += DX; return `${c} m`; })(),
+    tideR: `±${S.tideAmp.toFixed(1)} m`, tideNow: S.storm ? `${w.tide >= 0 ? '+' : '−'}${Math.abs(w.tide).toFixed(1)} m` : 'averaged (no storm)',
+    timing: { high: 'high tide', low: 'low tide', random: 'random' }[S.timing],
+    nhead: String(S.structures.filter(s => s.type === 'headland').length),
+    kmax: (() => { let m = 1; for (let i = 0; i < N; i++) m = Math.max(m, Kd[i] || 1); return m > 1.005 ? `+${Math.round((m - 1) * 100)}%` : 'none'; })()
   };
   document.querySelectorAll('[data-live]').forEach(el => { const v = vals[el.dataset.live]; if (v !== undefined && el.textContent !== v) el.textContent = v; });
   document.querySelectorAll('.term[data-key="storm"]').forEach(el => el.classList.toggle('hot', !!S.storm));
-  document.querySelectorAll('.term[data-key="cross"]').forEach(el => el.classList.toggle('hot', !!S.storm));
+  document.querySelectorAll('.term[data-key="cross"], .term[data-key="tide"]').forEach(el => el.classList.toggle('hot', !!S.storm));
+  document.querySelectorAll('.term[data-key="dune"]').forEach(el => el.classList.toggle('hot', !!S.storm && S.twl > 3));
 }
 
 // ---------- readouts ----------
@@ -1561,28 +1403,35 @@ function updateReadouts() {
   let Qm = 0; for (let j = 40; j <= 110; j++) Qm += Q[j]; Qm /= 71;
   $('driftPill').textContent = 'Sand drift ' + fmtQ(Qm);
   const sb = $('stormBanner');
-  if (S.storm) { const left = (S.storm.t0 + S.storm.dur - S.t) * 365; sb.hidden = false; sb.textContent = `${S.storm.def.name}: waves ${w.H0.toFixed(1)} m, surge ${w.surge.toFixed(1)} m · ${Math.max(0, left).toFixed(1)} days left (slow motion)`; }
+  if (S.storm) { const left = (S.storm.t0 + S.storm.dur - S.t) * 365; sb.hidden = false; sb.textContent = `${S.storm.def.name}: waves ${w.H0.toFixed(1)} m, surge ${w.surge.toFixed(1)} m, tide ${w.tide >= 0 ? '+' : '−'}${Math.abs(w.tide).toFixed(1)} m ${w.tide > S.tideAmp * 0.7 ? '(high tide!)' : w.tide < -S.tideAmp * 0.7 ? '(low tide)' : ''} · ${Math.max(0, left).toFixed(1)} days left (slow motion)`; }
   // sliders follow waves
   const b = siteBase();
   if (document.activeElement !== h0) h0.value = b.H0; if (document.activeElement !== per) per.value = b.T;
   $('h0o').textContent = `${b.H0.toFixed(2)} m`; $('pero').textContent = `${b.T.toFixed(1)} s`;
   drawDial(b.th);
-  $('slro').textContent = `${S.slr.toFixed(1)} mm/yr`; $('volo').textContent = `${fmtVol(S.vol)} m³`; $('rwo').textContent = `${S.riverW} m`;
+  $('slro').textContent = `${S.slr.toFixed(1)} mm/yr`; $('tideo').textContent = `±${S.tideAmp.toFixed(1)} m`; $('volo').textContent = `${fmtVol(S.vol)} m³`; $('rwo').textContent = `${S.riverW} m`; $('rqo').textContent = S.rq ? `${fmtVol(S.rq)} m³/yr` : 'none';
   $('nrmo').textContent = `${compass(S.normal)} ${Math.round(S.normal)}°`; $('trno').textContent = `${S.turn > 0 ? '+' : ''}${S.turn}°`; $('expoo').textContent = `× ${S.expo.toFixed(2)}`;
   $('k1o').textContent = S.K1.toFixed(2); $('d50o').textContent = `${S.d50.toFixed(2)} mm`; $('hso').textContent = `${S.hstar.toFixed(1)} m`;
   // stats
   let sum = 0, mn = 1e9, mnI = 0, mx = -1e9, mxI = 0;
   for (let i = 0; i < N; i++) { const d = y[i] - Y0; sum += d; if (d < mn) { mn = d; mnI = i; } if (d > mx) { mx = d; mxI = i; } }
-  $('stTime').textContent = `${S.t.toFixed(1)} yr`;
   $('stAvg').textContent = `${sgn(sum / N)} m`;
   $('stWorst').textContent = `${sgn(Math.min(0, mn))} m`; $('stWorstS').textContent = mn < -0.5 ? `at ${Math.round((mnI + 0.5) * DX)} m` : 'none yet';
   $('stBest').textContent = `${sgn(Math.max(0, mx))} m`; $('stBestS').textContent = mx > 0.5 ? `at ${Math.round((mxI + 0.5) * DX)} m` : 'none yet';
   let risk = 0, lost = 0, vis = 0; for (const h of S.houses) { if (!houseVisible(h)) continue; vis++; const s = houseStatus(h); if (s === 'risk') risk++; if (s === 'gone') lost++; }
   if (S.playing && S.alert && risk > S.alert.risk) toast('🏠 A house is now at risk!');
   $('stHouses').textContent = `${risk + lost} / ${vis}`;
-  $('stHousesS').textContent = lost ? `${lost} washed away, ${risk} with under 15 m of beach` : 'beach under 15 m wide';
+  $('stHousesS').textContent = (lost ? `${lost} washed away, ${risk} at risk` : 'narrow beach or cut dune') ;
   $('stHouseBox').className = 'stat' + (risk + lost ? ' bad' : '');
-  $('stSand').textContent = fmtVol(S.sandAdded);
+  let htSum = 0, htMin = 1e9, htI = 0;
+  for (let i = 0; i < N; i++) { const v = Math.max(0, y[i] - (DUNE_TOE - S.dune[i]) - S.tideAmp / BETA_F); htSum += v; if (v < htMin) { htMin = v; htI = i; } }
+  $('stTide').textContent = `${(htSum / N).toFixed(0)} m`;
+  $('stTideS').textContent = htMin < 1 ? `none left at ${Math.round((htI + 0.5) * DX)} m` : `narrowest ${htMin.toFixed(0)} m`;
+  $('stTideBox').className = 'stat' + (htMin < 1 ? ' bad' : '');
+  $('stFloods').textContent = String(S.floods);
+  let ow = 0; for (let i = 0; i < N; i++) if (S.dune[i] >= DUNE_W - 0.5) ow += DX;
+  $('stFloodsS').textContent = ow ? `dune gone along ${ow} m` : S.floods ? 'houses flooded by overwash' : 'waves over the dune';
+  $('stFloodBox').className = 'stat' + (S.floods || ow ? ' bad' : '');
   const nn = S.nests.length; let nOk = 0, nRisk = 0, nLost = 0, nWash = 0;
   for (const n of S.nests) { const st = nestStatus(n); if (st === 'ok') nOk++; else if (st === 'risk') nRisk++; else nLost++; if (n.washed && inSeason()) nWash++; }
   $('stNests').textContent = nn ? `${nOk} / ${nn} safe` : 'none';
@@ -1603,7 +1452,6 @@ function frame(now) {
   const dtReal = Math.min(0.05, (now - last) / 1000); last = now;
   wavePhase += (W ? W.om : 0.75) * dtReal * 2.2; // accumulate, so a change in period never makes the crests jump or race
   if (S.playing) { advance(dtReal); moveParticles(dtReal); nestSeasonTick(W); checkHouses(); }
-  updateCritters(dtReal, now / 1000); updateCars(dtReal);
   const tSec = now / 1000;
   draw(tSec);
   if (now - lastUI > 200) { lastUI = now; updateReadouts(); updateLive(); drawChart(); }

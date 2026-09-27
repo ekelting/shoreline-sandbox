@@ -14,6 +14,7 @@
   --purple: #6a36b0;
   --slate: #5b6770;
   --teal: #0f7c8c;
+  --grass: #4f8a3a;
   --blue: #2f78d6;
   --shadow: 0 1px 2px rgba(20, 35, 42, .06), 0 6px 20px rgba(20, 35, 42, .06);
   --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
@@ -25,7 +26,7 @@
     color-scheme: dark;
     --bg: #0e1619; --panel: #152127; --panel-2: #111b20; --ink: #e2ebed; --muted: #97a9b0;
     --line: #26363d; --chip: #1c2b31; --accent: #5d9ff0; --accent-ink: #0b1418;
-    --orange: #ef7b4b; --green: #3cc393; --amber: #e0a73c; --purple: #a883e6; --slate: #9eabb3; --teal: #43b8c7; --blue: #5d9ff0;
+    --orange: #ef7b4b; --green: #3cc393; --amber: #e0a73c; --purple: #a883e6; --slate: #9eabb3; --teal: #43b8c7; --grass: #7fbf5f; --blue: #5d9ff0;
     --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.25);
   }
 }
@@ -33,7 +34,7 @@
   color-scheme: dark;
   --bg: #0e1619; --panel: #152127; --panel-2: #111b20; --ink: #e2ebed; --muted: #97a9b0;
   --line: #26363d; --chip: #1c2b31; --accent: #5d9ff0; --accent-ink: #0b1418;
-  --orange: #ef7b4b; --green: #3cc393; --amber: #e0a73c; --purple: #a883e6; --slate: #9eabb3; --teal: #43b8c7; --blue: #5d9ff0;
+  --orange: #ef7b4b; --green: #3cc393; --amber: #e0a73c; --purple: #a883e6; --slate: #9eabb3; --teal: #43b8c7; --grass: #7fbf5f; --blue: #5d9ff0;
   --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.25);
 }
 * { box-sizing: border-box; }
@@ -93,13 +94,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .toolcol .tool { padding: 5px 8px 5px 6px; font-size: 13.5px; width: 100%; }
 .toolcol .tool svg { width: 20px; height: 20px; }
 .toolcol .tool-hint { font-size: 12.5px; line-height: 1.4; }
-.show-toggles { display: flex; flex-wrap: nowrap; align-items: center; gap: 2px; font-size: 11px; font-weight: 700; overflow-x: auto; min-width: 0; width: 100%; flex: 1 1 100%; }
 .toolcol, .tool-extras { min-width: 0; }
-.showbtn { border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 8px; padding: 2px 3px; font-size: 10px; font-weight: 400; cursor: pointer; white-space: nowrap; flex: 0 0 auto; }
-.showbtn:hover, .showall:hover { border-color: var(--accent); }
-.showall { border: 1px solid var(--line); background: var(--panel-2); color: var(--ink); border-radius: 8px; padding: 2px 5px; font-size: 10px; font-weight: 400; cursor: pointer; white-space: nowrap; flex: 0 0 auto; }
-.show-sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 1px; flex: 0 0 auto; }
-.showbtn[aria-pressed="false"] { opacity: .45; text-decoration: line-through; }
 .tool-extras { display: flex; flex-wrap: wrap; align-items: end; gap: 8px 16px; }
 .tsl-wrap { flex: 1 1 170px; display: grid; gap: 2px; }
 .toolcol .tsl { font-size: 12.5px; font-weight: 700; display: flex; justify-content: space-between; gap: 6px; }
@@ -205,6 +200,11 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 details.adv summary { cursor: pointer; font-weight: 700; font-size: 14px; }
 details.adv[open] summary { margin-bottom: 8px; }
 .note { font-size: 12.5px; color: var(--muted); margin: 0; }
+.chk { display: flex; align-items: center; gap: 8px; font-size: 13.5px; cursor: pointer; }
+.chk input { width: 16px; height: 16px; accent-color: var(--accent); flex: none; }
+.subrow { display: grid; gap: 4px; font-size: 13.5px; }
+.subrow .seg { flex-wrap: nowrap; }
+.subrow .seg button { font-size: 12.5px; padding: 4px 4px; white-space: nowrap; flex: 1 1 0; min-width: 0; }
 
 /* Math panel */
 .mathsec { margin-top: 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 18px; display: grid; gap: 14px; }

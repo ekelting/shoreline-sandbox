@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="description" content="Build groins, jetties and breakwaters on a sandy beach or a real Maine beach, choose the waves and seasons, send storms, protect shorebird nests, and watch the shoreline and its equation change.">
+<meta name="description" content="Build groins, jetties, headlands, breakwaters and dune grass on a sandy beach or a real Maine beach, choose the waves and seasons, time storms with the tide, watch dunes erode and waves wash over the road, protect shorebird nests, and see the math change as you go.">
 <title>Shoreline Sandbox</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -57,22 +57,9 @@
         <input type="range" id="vol" min="50000" max="500000" step="25000"></div>
         <div class="tsl-wrap"><label class="tsl" for="rw">🏞️ River width <output id="rwo" for="rw"></output></label>
         <input type="range" id="rw" min="20" max="200" step="5"></div>
+        <div class="tsl-wrap"><label class="tsl" for="rq">🟫 River sand <output id="rqo" for="rq"></output></label>
+        <input type="range" id="rq" min="0" max="120000" step="2000"></div>
         <button class="btn" id="btnRebuild" type="button">🔨 Rebuild all houses</button>
-        <div class="show-toggles" role="group" aria-label="Show or hide animals and boats">
-          <span>Show:</span>
-          <button type="button" class="showbtn" data-show="boats" aria-pressed="true">⛵ Boats</button>
-          <button type="button" class="showbtn" data-show="birds" aria-pressed="true">🐦 Birds</button>
-          <button type="button" class="showbtn" data-show="fish" aria-pressed="true">🐟 Fish</button>
-          <button type="button" class="showbtn" data-show="lobsters" aria-pressed="true">🦞 Lobsters</button>
-          <button type="button" class="showbtn" data-show="seals" aria-pressed="true">🦭 Seals</button>
-          <button type="button" class="showbtn" data-show="porpoises" aria-pressed="true">🐬 Porpoises</button>
-          <button type="button" class="showbtn" data-show="sharks" aria-pressed="true">🦈 Sharks</button>
-          <button type="button" class="showbtn" data-show="whales" aria-pressed="true">🐋 Whales</button>
-          <button type="button" class="showbtn" data-show="crabs" aria-pressed="true">🦀 Crabs</button>
-          <span class="show-sep" aria-hidden="true"></span>
-          <button type="button" class="showall" data-showall="1">All</button>
-          <button type="button" class="showall" data-showall="0">None</button>
-        </div>
       </div>
       <div class="tool-hint" id="toolHint"></div>
     </section>
@@ -103,13 +90,13 @@
       <canvas id="chart" aria-label="Shoreline change along the beach, lined up with the beach above"></canvas>
     </div>
     <div class="stats" id="stats">
-        <div class="stat"><div class="k">⏱️ Time</div><div class="v" id="stTime">0.0 yr</div><div class="s" id="stTimeS">since start</div></div>
         <div class="stat" id="stAvgBox"><div class="k">📏 Average change</div><div class="v" id="stAvg">0.0 m</div><div class="s">whole beach</div></div>
         <div class="stat bad"><div class="k">🌊 Most erosion</div><div class="v" id="stWorst">0 m</div><div class="s" id="stWorstS">—</div></div>
         <div class="stat good"><div class="k">🏖️ Most growth</div><div class="v" id="stBest">0 m</div><div class="s" id="stBestS">—</div></div>
+        <div class="stat" id="stTideBox"><div class="k">⛱️ High-tide beach</div><div class="v" id="stTide">0 m</div><div class="s" id="stTideS">dry sand at high tide</div></div>
         <div class="stat" id="stHouseBox"><div class="k">🏠 Houses at risk</div><div class="v" id="stHouses">0 / 15</div><div class="s" id="stHousesS">beach under 15 m wide</div></div>
+        <div class="stat" id="stFloodBox"><div class="k">🌊 Floods</div><div class="v" id="stFloods">0</div><div class="s" id="stFloodsS">waves over the dune</div></div>
         <div class="stat" id="stNestBox"><div class="k">🐣 Shorebird nests</div><div class="v" id="stNests">0 / 0</div><div class="s" id="stNestsS">safe nesting areas</div></div>
-        <div class="stat"><div class="k">🚚 Sand added</div><div class="v" id="stSand">0</div><div class="s">m³ from nourishment</div></div>
       </div>
 
   </div>
@@ -161,6 +148,9 @@
           <button class="btn storm" id="btnNoreaster">🌬️ Send a nor'easter</button>
           <button class="btn storm trop" id="btnTropical">🌀 Send a tropical storm</button>
         </div>
+        <div class="subrow"><span>Storm peaks at</span><div class="seg" id="timingSeg" role="group" aria-label="Storm timing"><button type="button" data-timing="high">🌕 High tide</button><button type="button" data-timing="random">🎲 Random</button><button type="button" data-timing="low">🌑 Low tide</button></div></div>
+        <div class="row"><label for="tide">Tide height</label><input type="range" id="tide" min="0" max="2.5" step="0.1"><output id="tideo" for="tide"></output></div>
+        <p class="note">Maine's tides rise and fall about 2.6&nbsp;m twice a day. The same storm can do much more damage when it peaks at high tide.</p>
         <div class="row"><label for="slr">Sea-level rise</label><input type="range" id="slr" min="0" max="20" step="0.5"><output id="slro" for="slr"></output></div>
         <p class="note">Portland, Maine's tide gauge has recorded roughly 2&nbsp;mm/yr since 1912. Try 10–15&nbsp;mm/yr for late-century projections.</p>
       </section>
@@ -228,6 +218,10 @@
             <dt>\(A\)</dt><dd>profile shape factor from grain size (Dean profile \(h = A\,d^{2/3}\))</dd>
             <dt>\(S,\ \eta\)</dt><dd>storm surge, and mean sea level</dd>
             <dt>\(W,\ W_*\)</dt><dd>width of the part of the profile that responds to storms / to sea level</dd>
+            <dt>\(\eta_T\)</dt><dd>the tide (height above mean sea level)</dd>
+            <dt>\(R_2,\ TWL\)</dt><dd>wave run-up up the beach, and the total water level: sea level + tide + surge + run-up</dd>
+            <dt>\(x_d\)</dt><dd>how far the dune has been cut back</dd>
+            <dt>\(z_t,\ z_c\)</dt><dd>height of the dune toe and crest above sea level</dd>
           </dl>
         </div>
       </div>
@@ -241,15 +235,17 @@
       <h2>🔬 How the model works</h2>
       <p>This is a <b>one-line model</b>, the workhorse of shoreline engineering since Pelnard-Considère (1956). It treats the whole beach profile as one line that moves back and forth without changing shape, so the only thing that matters is how much sand flows along the shore.</p>
       <p>Waves that arrive at an angle drive a current in the surf zone that carries sand along the beach. Where that flow speeds up, the beach loses sand and retreats; where it slows down (behind a groin, in the calm lee of a breakwater) the beach builds out. A second, faster part of the model moves sand between the beach and an offshore bar as waves grow and shrink, so the beach narrows in storms and heals in calm weather. Sea-level rise shifts the whole profile landward (the Bruun rule).</p>
-      <p><b>Shorebirds.</b> Piping plovers and least terns, both endangered in Maine, nest on open, dry sand in front of the dunes from May through August. A nesting area stays safe while there is at least 20&nbsp;m of dry beach in front of the dune, is at risk below that, and is lost below 8&nbsp;m (for example in front of a seawall). A storm during nesting season washes out nests on narrow beaches. At the end of each season, safe areas fledge about 1.44 chicks per pair, Maine's statewide rate in 2025.</p>
+      <p><b>Tides, dunes and overwash.</b> During a storm the sim resolves the tide (Maine's semidiurnal tide, 12.42 hours). Waves run up the beach (Stockdon et al., 2006); when sea level + tide + surge + run-up climbs above the dune toe, the dune is cut back (Larson et al., 2004, with coefficients fit to Camp Ellis). A wide beach lifts the toe, so it shields the dune. Once the dune is gone, waves wash over onto the road and flood houses. Between storms, wind slowly rebuilds dunes on wide beaches.</p>
+      <p><b>Waves blocked and focused.</b> Headlands and long jetties shape the waves that reach the beach. A rocky headland blocks waves arriving from its side, leaving a calm shadow in its lee, and no sand gets around it. Waves that hit a headland or a long jetty bounce back and pile up on top of the incoming waves, so the beach just updrift sees waves up to 25% bigger (as beside the Camp Ellis jetty).</p>
+      <p><b>Dune grass.</b> Planted beach grass binds the dune with its roots and traps blowing sand. On planted stretches the model makes storm erosion 40% slower and post-storm recovery 30% faster (illustrative values). Grass does not change longshore drift, and it stops working where the sea reaches the dune.</p>      <p><b>Shorebirds.</b> Piping plovers and least terns, both endangered in Maine, nest on open, dry sand in front of the dunes from May through August. A nesting area stays safe while there is at least 20&nbsp;m of dry beach in front of the dune, is at risk below that, and is lost below 8&nbsp;m (for example in front of a seawall). A storm during nesting season washes out nests on narrow beaches. At the end of each season, safe areas fledge about 1.44 chicks per pair, Maine's statewide rate in 2025.</p>
       <p>The sim solves these equations with finite differences on 150 cells, each 10&nbsp;m long, taking hundreds of small time steps per second.</p>
     </section>
     <section>
       <h2>🤔 What it leaves out</h2>
       <ul>
-        <li>Waves are the same everywhere along the beach except near structures; real bays like Saco Bay focus and shelter waves unevenly.</li>
+        <li>Waves are the same everywhere along the beach except near structures and headlands; real bays like Saco Bay focus and shelter waves unevenly.</li>
         <li>Wave conditions are monthly averages rather than real, hour-by-hour sea states, so drift rates are on the high side.</li>
-        <li>Dunes, overwash, tidal inlets, rip currents, and wave reflection off seawalls are not modelled.</li>
+        <li>Dunes and overwash are simplified to one number per 10&nbsp;m of beach; tidal inlets, rip currents and wave reflection off seawalls are not modelled.</li>
         <li>The season climate is illustrative: winter swell from the east–northeast, calm summers with south–southeast swell, shaped by the UNE Camp Ellis buoy record and NOAA buoy 44007.</li>
       </ul>
       <p>Use it to build intuition, not to forecast a real beach.</p>
@@ -267,6 +263,8 @@
         <li>Dean, R.G. (1991). Equilibrium beach profiles. <i>J. Coastal Research</i> 7(1).</li>
         <li>Miller, J.K. &amp; Dean, R.G. (2004). A simple new shoreline change model. <i>Coastal Engineering</i> 51.</li>
         <li>Bruun, P. (1962). Sea-level rise as a cause of shore erosion. <i>J. Waterways and Harbors Div.</i>, ASCE 88.</li>
+        <li>Stockdon, H.F., Holman, R.A., Howd, P.A. &amp; Sallenger, A.H. (2006). Empirical parameterization of setup, swash, and runup. <i>Coastal Engineering</i> 53.</li>
+        <li>Larson, M., Erikson, L. &amp; Hanson, H. (2004). An analytical model to predict dune erosion due to wave impact. <i>Coastal Engineering</i> 51.</li>
         <li><a href="https://www.ndbc.noaa.gov/station_page.php?station=44007" target="_blank" rel="noopener">NOAA NDBC buoy 44007, Portland</a> and the <a href="https://ekelting.github.io/UNE-Camp-Ellis-SPOT-32787C/" target="_blank" rel="noopener">UNE Camp Ellis wave buoy</a> (wave seasons and storm directions).</li>
         <li><a href="https://tidesandcurrents.noaa.gov/sltrends/sltrends_station.shtml?id=8418150" target="_blank" rel="noopener">NOAA sea level trend, Portland ME (8418150)</a>.</li>
         <li><a href="https://maineaudubon.org/news/plovers-all-over-2025-season-recap/" target="_blank" rel="noopener">Maine Audubon (2025), plover season recap</a> and <a href="https://www.maine.gov/ifw/fish-wildlife/wildlife/endangered-threatened-species/essential-wildlife-habitat/pplt-nests.html" target="_blank" rel="noopener">Maine IF&amp;W, piping plover and least tern essential habitat</a>.</li>
@@ -275,7 +273,6 @@
     </section>
   </div>
 </div>
-
 <script src="js/sandbox.js"></script>
 </body>
 </html>

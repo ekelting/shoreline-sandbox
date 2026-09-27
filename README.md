@@ -1,6 +1,6 @@
 # Shoreline Sandbox 🏖️
 
-An interactive, playful shoreline-change simulator for the general public. Place groins, T-groins (spurs), jetties, offshore breakwaters, seawalls, rivers and beach nourishment on a straight 1.5 km beach. Choose the wave direction, height, period and season, send a nor'easter or a tropical storm, raise the sea level, and watch the shoreline evolve. A live panel shows the governing equation, and new terms appear as you add each structure or process.
+An interactive, playful shoreline-change simulator for the general public. Place groins, T-groins (spurs), jetties, offshore breakwaters, seawalls, rivers and beach nourishment on a straight 1.5 km beach. Choose the wave direction, height, period and season, send a nor'easter or a tropical storm, time it with the tide, raise the sea level, and watch the shoreline and dunes evolve. A live panel shows the governing equation, and new terms appear as you add each structure or process.
 
 The beach is generic, oriented like Saco Bay, Maine (it faces east, with north on the left). A Saco Bay version is planned.
 
@@ -13,12 +13,12 @@ You can also download this repository and open `index.html` in any modern browse
 ## How to use it
 
 1. **Pick a place.** Start from the generic beach, or load a Maine beach from the box at the top right (Camp Ellis, Camp Ellis with the new spur jetty, Old Orchard Beach, Pine Point, Wells Beach, Kennebunk Beach, Ogunquit Beach, Popham Beach). Each one loads that beach's main structures, which way it faces, and its wave and sand settings.
-2. **Build.** Pick a tool from the Build box above the beach (Groin, T-groin / spur, Jetty, Breakwater, Seawall, Add sand, River, Nesting area, Rebuild house) and click the water or the beach. Drag to set a groin's length or a breakwater's or seawall's extent. Use **Remove** or **Undo last** to take things away. Set the size of sand fills and the width of new rivers (wider rivers bring more sand) with the sliders under the tools. Houses that wash away leave empty lots; rebuild them with **Rebuild house** or **Rebuild all houses** once there is at least 20 m of beach again.
+2. **Build.** Pick a tool from the Build box above the beach (Groin, T-groin / spur, Jetty, Breakwater, Headland, Dune grass, Seawall, Add sand, River, Nesting area, Rebuild house) and click the water or the beach. Drag to set a groin's length or a breakwater's or seawall's extent. Use **Remove** or **Undo last** to take things away. Set the size of sand fills, and the width and sand supply of rivers, with the sliders under the tools (the river sliders also change the river you placed last). Houses that wash away leave empty lots; rebuild them with **Rebuild house** or **Rebuild all houses** once there is at least 20 m of beach again.
 3. **Set the waves.** Choose *Year-round* (waves change month by month) or hold one season, or drag the direction dial and the height and period sliders for custom waves.
 4. **Run time.** Press **Start model**, and use the **Speed** slider to go from 1 year every 30 seconds up to 2 years per second. **Pause model** freezes the beach; the waves keep moving.
-5. **Add weather.** Send a nor'easter or a tropical storm (the sim slows to about a day per second so you can watch), or raise the sea-level-rise slider.
-6. **Read the results.** The chart shows how far the shoreline has moved at each point, the tiles count houses at risk and safe shorebird nesting areas (with chicks fledged each season), and **Look** mode tells you what is under the pointer: water depth and waves, beach width and sand drift, or details of a structure, river or nesting area.
-7. **Enjoy the extras.** Pop-up messages announce storms, houses at risk, nesting seasons and tombolos, beach umbrellas appear in summer, crabs scuttle across the sand, cars drive along the road (and U-turn where the sea has washed it out), lobster boats, sailboats, gulls, schools of fish, pods of harbor porpoises, a seal, lobsters, lobster buoys and the odd shark or whale share the water (all hand-drawn in the same top-down style as the structures; switch boats, birds, fish, lobsters, seals, porpoises, sharks, whales or crabs off with the Show buttons in the Build box, or use All / None), and the ☀️ / 🌙 / 🖥️ buttons at the top switch between light, dark and automatic themes.
+5. **Add weather.** Send a nor'easter or a tropical storm (the sim slows to 12 hours per second so you can watch the tide rise and fall). Choose whether the storm peaks at high tide, low tide or a random time, and set the tide height. Watch waves run up the beach, cut the dune back and, once the dune is gone, wash over onto the road and flood houses. You can also raise the sea-level-rise slider.
+6. **Read the results.** The chart shows how far the shoreline has moved at each point, the tiles show the dry beach left at high tide, houses at risk, houses flooded by overwash, and safe shorebird nesting areas (with chicks fledged each season), and **Look** mode tells you what is under the pointer: water depth and waves, beach width and sand drift, or details of a structure, river or nesting area.
+7. **Get feedback.** Pop-up messages announce storms, overwash, houses at risk, flooded or washed away, nests washed over or lost, and tombolos, and the ☀️ / 🌙 / 🖥️ buttons at the top switch between light, dark and automatic themes.
 8. **Read the math.** The "math behind your beach" section shows the equation being solved right now, a list of its parts, the parts that are always on, and the parts you have added (with the ones you haven't unlocked yet shown faded). Each part has a plain-language explanation and live values.
 
 Not sure where to start? Try the four ready-made experiments: a groin field, a river-mouth jetty, a breakwater salient and a seawall squeeze.
@@ -58,7 +58,19 @@ where $A = 0.21\,d_{50}^{0.48}$ is the Dean profile parameter. Groins also shelt
 
 **Breakwaters:** $H_b \to K_d H_b$ in the geometric shadow, with smooth diffraction edges; a shoreline that reaches the breakwater forms a tombolo.
 
-**Rivers:** a river delivers sand to the beach on both sides of its mouth, and keeps its mouth open (the shoreline across the channel can build out at most 20 m). A river mouth held between jetties sends its sand out past the jetties instead, so it never reaches the beach.
+**Rivers:** a river delivers its sand supply $Q_r$ (set with the slider) to the beach on both sides of its mouth, and keeps its mouth open (the shoreline across the channel can build out at most 20 m). A river mouth held between jetties sends its sand out past the jetties instead, so it never reaches the beach.
+
+**Dune grass:** on planted stretches the cross-shore rates become $k_v = (1-\beta)k$ during storm erosion and $(1+\gamma)k$ during recovery, with illustrative $\beta = 0.4$ and $\gamma = 0.3$. Grass has no effect on longshore drift and stops working where the shoreline reaches the dune.
+
+**Headlands and wave focusing:** a rocky headland blocks all drift ($\mathrm{BYP} = 0$) and leaves a strong wave shadow in its lee. Waves reflected off headlands and long jetties raise the waves on the beach just updrift: $H_b \to K H_b$ with $K = (1 - 0.8 S_h)(1 + 0.25e^{-d/70\,\mathrm{m}})$ within 220 m.
+
+**Tides and storm timing:** during storms the tide is resolved, $\eta_T = A\cos[2\pi(t - t_{HW})/12.42\,\mathrm{h}]$, with $A$ = 1.3 m by default (Maine's range is about 2.6 m). The storm surge peaks sharply (about half a day), so whether it arrives at high or low tide matters. The storm can be set to peak at high tide, low tide or a random time.
+
+**Dunes and overwash:** the total water level is $TWL = \eta + \eta_T + S + R_2$, with the 2% run-up of Stockdon et al. (2006), $R_2 \approx 1.1\sqrt{H_0L_0}\,(0.35\beta_f + \tfrac12\sqrt{0.563\beta_f^2 + 0.004})$, $\beta_f = 0.08$. When $TWL$ exceeds the dune toe, the dune face retreats (Larson et al. 2004):
+
+$$\frac{dx_d}{dt} = \frac{4C_s\,(TWL - z_t)_+^2}{T\,(z_c - z_t)}$$
+
+with $C_s = 9.3\times10^{-4}$, $z_c - z_t = 4.8$ m (fit to Camp Ellis). The toe height rises with dry-beach width, $z_t = \beta_f\,w$ (1.5–6 m), so wide beaches shield their dunes. Eroded dune sand feeds the beach; between storms, wind rebuilds the dune at 0.41 m/yr where the beach is wider than 20 m. When the 28 m dune is gone and $TWL$ is more than 0.8 m above the toe, waves wash over onto the road; a house within 30 m is counted as flooded (once per storm). Dune grass slows dune erosion ×0.6 and speeds regrowth ×1.5.
 
 **Seawalls:** $y(x,t) \ge y_w$, enforced by limiting outgoing transport (so the beach in front can disappear).
 
@@ -78,7 +90,7 @@ with $k = 150\ \mathrm{yr^{-1}}$ for erosion and $8\ \mathrm{yr^{-1}}$ for recov
 
 ## Limitations
 
-This is a teaching tool, not a forecast. Waves are uniform alongshore apart from structure effects, forcing uses monthly averages (so drift rates are high), and dunes, overwash, inlets, rip currents and seawall reflection are not modelled.
+This is a teaching tool, not a forecast. Waves are uniform alongshore apart from structure effects, forcing uses monthly averages (so drift rates are high), dunes and overwash are simplified to one value per 10 m, and inlets, rip currents and seawall reflection are not modelled.
 
 ## References
 
@@ -90,8 +102,10 @@ This is a teaching tool, not a forecast. Waves are uniform alongshore apart from
 - Komar, P.D. & Gaughan, M.K. (1972). Airy wave theory and breaker height prediction. *Proc. 13th Coastal Engineering Conf.*
 - Le Méhauté, B. & Soldate, M. (1977). *Mathematical Modeling of Shoreline Evolution*. CERC Misc. Report 77-10.
 - Miller, J.K. & Dean, R.G. (2004). A simple new shoreline change model. *Coastal Engineering* 51.
+- Larson, M., Erikson, L. & Hanson, H. (2004). An analytical model to predict dune erosion due to wave impact. *Coastal Engineering* 51.
 - Ozasa, H. & Brampton, A.H. (1980). Mathematical modelling of beaches backed by seawalls. *Coastal Engineering* 4.
 - Pelnard-Considère, R. (1956). Essai de théorie de l'évolution des formes de rivage en plages de sable et de galets. *4èmes Journées de l'Hydraulique*.
+- Stockdon, H.F., Holman, R.A., Howd, P.A. & Sallenger, A.H. (2006). Empirical parameterization of setup, swash, and runup. *Coastal Engineering* 53.
 - U.S. Army Corps of Engineers (1984). *Shore Protection Manual*; (2002) *Coastal Engineering Manual*, EM 1110-2-1100.
 - NOAA NDBC station 44007: https://www.ndbc.noaa.gov/station_page.php?station=44007
 - NOAA sea level trends, Portland ME 8418150: https://tidesandcurrents.noaa.gov/sltrends/sltrends_station.shtml?id=8418150
