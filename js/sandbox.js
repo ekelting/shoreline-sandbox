@@ -22,7 +22,7 @@ const START_MONTH = 8; // September
 const S = {
   t: 0, yls: new Float64Array(N), ycs: new Float64Array(N), structures: [], fills: [], sandAdded: 0,
   storm: null, storms: 0, mode: 'cycle', H0: 1, T: 8.5, th: 0, slr: 2, eta: 0, speed: 1 / 30, playing: false,
-  K1: 0.2, d50: 0.3, hstar: 8, normal: 90, turn: 0, expo: 1, place: 'generic', houses: HOUSES.map(x => ({ x, gone: false })), riverW: 60, critters: [], nests: [], fledged: 0, lastMonth: -1, vol: 200000, tool: 'inspect', nextId: 1, placed: false, lastSurge: 0
+  K1: 0.2, d50: 0.3, hstar: 8, normal: 90, turn: 0, expo: 1, place: 'generic', show: { boats: true, birds: true, fish: true, lobsters: true, seals: true, porpoises: true, sharks: true, whales: true, crabs: true }, houses: HOUSES.map(x => ({ x, gone: false })), riverW: 60, critters: [], nests: [], fledged: 0, lastMonth: -1, vol: 200000, tool: 'inspect', nextId: 1, placed: false, lastSurge: 0
 };
 const y = new Float64Array(N), Hc = new Float64Array(N), Kd = new Float64Array(N), Q = new Float64Array(N + 1);
 let W = null; // current waves (breaking info)
@@ -218,7 +218,7 @@ function resize() {
   CW = stage.clientWidth; sc = CW / XL; CH = Math.round(YL * sc);
   cv.width = Math.round(CW * dpr); cv.height = Math.round(CH * dpr); cv.style.height = CH + 'px';
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const cw = ch.clientWidth; ch.width = Math.round(cw * dpr); ch.height = Math.round(110 * dpr);
+  const cw = ch.clientWidth; ch.width = Math.round(cw * dpr); ch.height = Math.round(120 * dpr);
   cctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 const px = X => X * sc, py = Y => CH - Y * sc;
@@ -376,17 +376,13 @@ function draw(time) {
   ctx.beginPath(); ctx.moveTo(0, py(6)); ctx.lineTo(CW, py(6)); ctx.stroke(); ctx.setLineDash([]);
   for (const h of S.houses) {
     if (!houseVisible(h)) continue;
-    const st = houseStatus(h), wpx = Math.max(8, 26 * sc), hpx = Math.max(7, 20 * sc), cx = px(h.x), cy = py(33);
+    const st = houseStatus(h), wpx = Math.max(10, 28 * sc), hpx = Math.max(8, 20 * sc), cx = px(h.x), cy = py(28);
     ctx.save(); ctx.translate(cx, cy);
     if (st === 'gone') { // empty lot with rubble
       ctx.strokeStyle = 'rgba(80,80,80,0.7)'; ctx.setLineDash([3, 2]); ctx.lineWidth = 1; ctx.strokeRect(-wpx / 2, -hpx / 2, wpx, hpx); ctx.setLineDash([]);
       const rr = seeded(Math.round(h.x));
       for (let i = 0; i < 7; i++) { ctx.fillStyle = i % 2 ? '#8a7d6b' : '#a8a29a'; ctx.fillRect(-wpx / 2 + rr() * wpx * 0.8, -hpx / 2 + rr() * hpx * 0.8, 2.5, 2); }
-    } else {
-      ctx.fillStyle = '#f4efe6'; ctx.fillRect(-wpx / 2, -hpx / 2, wpx, hpx);
-      ctx.fillStyle = st === 'ok' ? '#6c4b3b' : '#d95926'; ctx.fillRect(-wpx / 2, -hpx / 2, wpx, hpx * 0.45);
-      if (st === 'risk') { ctx.strokeStyle = '#d95926'; ctx.lineWidth = 2; ctx.strokeRect(-wpx / 2 - 2, -hpx / 2 - 2, wpx + 4, hpx + 4); }
-    }
+    } else drawHouse(wpx, hpx, h.x, st === 'risk');
     ctx.restore();
   }
   drawNests();
@@ -457,11 +453,13 @@ function emojiAt(ch, X, Y, size, flip, alpha) {
 }
 const SHELLS = (() => { const r = seeded(99); return Array.from({ length: 24 }, () => ({ u: r(), f: r(), k: r() })); })();
 // does moving from X0 to X1 at height Y run into a structure (or the beach, for swimmers and boats)?
-function blockedSea(X0, X1, Y) {
+const BODY = { boat: 36, sail: 34, fish: 12, shark: 40, whale: 70, porpoise: 22, gull: 0 }; // half-length in metres, for collisions
+function blockedSea(X0, X1, Y, half) {
+  half = half || 0; const dir = Math.sign(X1 - X0) || 1, F0 = X0 + dir * half, F1 = X1 + dir * half, lo = Math.min(X1 - half, X1 + half), hi = Math.max(X1 - half, X1 + half);
   for (const s of S.structures) {
-    if (isStem(s) && ((X0 < s.x && X1 >= s.x) || (X0 > s.x && X1 <= s.x)) && Y < s.tip + 14) return true;
-    if (s.type === 'breakwater' && Math.abs(Y - s.y) < 20 && X1 > s.x1 - 12 && X1 < s.x2 + 12) return true;
-    if (s.type === 'tgroin' && Math.abs(Y - s.tip) < 20 && X1 > s.x - s.head - 12 && X1 < s.x + s.head + 12) return true;
+    if (isStem(s) && ((F0 < s.x && F1 >= s.x) || (F0 > s.x && F1 <= s.x)) && Y < s.tip + 16) return true;
+    if (s.type === 'breakwater' && Math.abs(Y - s.y) < 22 && hi > s.x1 - 8 && lo < s.x2 + 8) return true;
+    if (s.type === 'tgroin' && Math.abs(Y - s.tip) < 22 && hi > s.x - s.head - 8 && lo < s.x + s.head + 8) return true;
   }
   return Y < shoreAt(clamp(X1, 0, XL)) + surfWidthAt(clamp(X1, 0, XL)) + 20;
 }
@@ -477,24 +475,30 @@ function spawnCritters() {
     { kind: 'boat', e: '🚤', x: 200, y: 610, vx: 11, size: 0.95 },
     { kind: 'sail', e: '⛵', x: 1100, y: 520, vx: -6, size: 1.05 },
     { kind: 'gull', e: '🕊️', x: 700, y: 470, vx: 18, size: 0.65 },
+    { kind: 'gull', e: '🕊️', x: 1200, y: 300, vx: -14, size: 0.65, ph: 2 },
+    { kind: 'gull', e: '🕊️', x: 150, y: 560, vx: 22, size: 0.65, ph: 4 },
     { kind: 'fish', e: '🐟', x: 300, y: 330, vx: 5, size: 0.55 },
     { kind: 'fish', e: '🐠', x: 900, y: 390, vx: -4, size: 0.55 },
-    { kind: 'fish', e: '🐟', x: 1300, y: 300, vx: -6, size: 0.5 }
   ];
 }
 function updateCritters(dt, t) {
   if (!S.critters.length) spawnCritters();
   const stormy = W && W.sf > 0.1;
   // occasional visitors
-  if (!stormy && Math.random() < dt / 9 && S.critters.filter(c => c.kind === 'crab').length < 2) {
+  if (S.show.crabs && !stormy && Math.random() < dt / 9 && S.critters.filter(c => c.kind === 'crab').length < 2) {
     const x = 80 + Math.random() * (XL - 160);
     if (shoreAt(x) - DUNE_TOE > 20 && !blockedBeach(x, x)) S.critters.push({ kind: 'crab', e: '🦀', x, off: 4 + Math.random() * 14, vx: (Math.random() < 0.5 ? -1 : 1) * (7 + Math.random() * 5), size: 0.55, life: 5 + Math.random() * 5 });
   }
-  if (Math.random() < dt / 50 && !S.critters.some(c => c.kind === 'shark')) {
+  if (S.show.sharks && Math.random() < dt / 140 && !S.critters.some(c => c.kind === 'shark' || c.kind === 'whale' || c.kind === 'porpoise')) {
     const dir = Math.random() < 0.5 ? 1 : -1; S.critters.push({ kind: 'shark', e: '🦈', x: dir > 0 ? -60 : XL + 60, y: 470 + Math.random() * 150, vx: dir * 10, size: 0.9, once: true });
     toast('🦈 Shark spotted offshore! It\'s just passing through.');
   }
-  if (Math.random() < dt / 110 && !S.critters.some(c => c.kind === 'whale')) {
+  if (S.show.porpoises && Math.random() < dt / 80 && !S.critters.some(c => c.kind === 'porpoise' || c.kind === 'shark' || c.kind === 'whale')) {
+    const dir = Math.random() < 0.5 ? 1 : -1, y0 = 380 + Math.random() * 200;
+    for (let i = 0; i < 3; i++) S.critters.push({ kind: 'porpoise', x: (dir > 0 ? -40 : XL + 40) - dir * i * 28, y: y0 + (i - 1) * 14, vx: dir * 6.5, size: 1, ph: i * 1.3, once: true });
+    toast('🐬 A pod of harbor porpoises is passing by!');
+  }
+  if (S.show.whales && Math.random() < dt / 220 && !S.critters.some(c => c.kind === 'whale' || c.kind === 'shark' || c.kind === 'porpoise')) {
     const dir = Math.random() < 0.5 ? 1 : -1; S.critters.push({ kind: 'whale', e: '🐋', x: dir > 0 ? -80 : XL + 80, y: YL - 20, vx: dir * 5, size: 1.3, once: true });
     toast('🐋 Whale sighting far offshore!');
   }
@@ -506,8 +510,16 @@ function updateCritters(dt, t) {
     }
     if (c.kind === 'fish' && Math.random() < dt / 6) c.vx = -c.vx;
     if (c.kind === 'fish') c.y = clamp(c.y + (Math.random() - 0.5) * 6 * dt, 200, YL - 40);
+    const half = BODY[c.kind] || 0;
+    if (c.kind !== 'gull') for (const s of S.structures) { // already overlapping something (e.g. just built on top of it)? move clear
+      if (isStem(s) && Math.abs(c.x - s.x) < half && c.y < s.tip + 16) { if (s.tip + 40 < YL - 10) c.y = s.tip + 40; else c.x = s.x + (c.x >= s.x ? 1 : -1) * (half + 2); }
+      if ((s.type === 'breakwater' || s.type === 'tgroin') && Math.abs(c.y - (s.type === 'breakwater' ? s.y : s.tip)) < 22) {
+        const a = s.type === 'breakwater' ? s.x1 : s.x - s.head, b2 = s.type === 'breakwater' ? s.x2 : s.x + s.head;
+        if (c.x + half > a - 8 && c.x - half < b2 + 8) c.y = Math.min(YL - 12, (s.type === 'breakwater' ? s.y : s.tip) + 40);
+      }
+    }
     const nx = c.x + c.vx * dt;
-    if (c.kind !== 'gull' && blockedSea(c.x, nx, c.y)) {
+    if (c.kind !== 'gull' && blockedSea(c.x, nx, c.y, half)) {
       // stuck against the beach? swim or sail farther out; otherwise turn around
       if (c.y < shoreAt(clamp(nx, 0, XL)) + surfWidthAt(clamp(nx, 0, XL)) + 20) c.y = Math.min(YL - 20, c.y + 30 * dt + 2);
       else c.vx = -c.vx;
@@ -546,67 +558,131 @@ function sprSailboat(k, t) {
   ell(3 * k, 0, 1 * k, 1 * k, 0, '#2b3a44');                                                    // mast
 }
 function sprGull(k, t) {
-  const f = Math.sin(t * 9), span = (8 + 2.5 * f) * k;
-  ell(6 * k, 9 * k, 5 * k, 2 * k, 0, 'rgba(0,0,0,0.12)');                                       // shadow on the water
-  ctx.fillStyle = '#d7dde1'; ctx.strokeStyle = '#6a737a'; ctx.lineWidth = 0.6;
-  for (const sgn of [-1, 1]) { ctx.beginPath(); ctx.moveTo(1.5 * k, 0); ctx.quadraticCurveTo(0, sgn * span * 0.6, -3 * k, sgn * span); ctx.lineTo(-4.5 * k, sgn * span * 0.9); ctx.quadraticCurveTo(-2 * k, sgn * span * 0.4, -2 * k, 0); ctx.fill(); ctx.stroke();
-    ell(-3.6 * k, sgn * span * 0.93, 1.3 * k, 0.8 * k, 0, '#222'); }                            // black wingtips
-  ell(0, 0, 4.5 * k, 1.6 * k, 0, '#ffffff'); ell(4.3 * k, 0, 1.5 * k, 1.3 * k, 0, '#ffffff');
-  ctx.fillStyle = '#e8a22b'; ctx.beginPath(); ctx.moveTo(5.6 * k, -0.4 * k); ctx.lineTo(7.4 * k, 0); ctx.lineTo(5.6 * k, 0.4 * k); ctx.fill();
+  // herring gull from above: white head and body, pale grey back and wings, black wingtips with white spots
+  const f = Math.sin(t * 8), span = (9 + 2.8 * f) * k, sweep = 0.35 + 0.15 * f, o = '#4b555c';
+  ell(7 * k, 10 * k, 6 * k, 2.4 * k, 0, 'rgba(0,0,0,0.16)');                                      // shadow on the water
+  for (const sg of [-1, 1]) {
+    const tipX = -3.5 * k - sweep * 6 * k, tipY = sg * span;
+    ctx.fillStyle = '#b7c1c8'; ctx.strokeStyle = o; ctx.lineWidth = 0.7;
+    ctx.beginPath(); ctx.moveTo(2 * k, sg * 1 * k); ctx.quadraticCurveTo(1.5 * k, sg * span * 0.55, tipX, tipY);   // leading edge
+    ctx.quadraticCurveTo(-3.5 * k, sg * span * 0.55, -3 * k, sg * 1 * k); ctx.closePath(); ctx.fill(); ctx.stroke(); // trailing edge
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.moveTo(-3 * k, sg * 1.5 * k); ctx.quadraticCurveTo(-3.4 * k, sg * span * 0.55, tipX + 1.2 * k, tipY - sg * 1.2 * k); ctx.stroke(); // white trailing edge
+    ctx.fillStyle = '#1b1b1b'; ctx.beginPath(); ctx.moveTo(tipX, tipY); ctx.lineTo(tipX + 3.2 * k, tipY - sg * 2.6 * k); ctx.lineTo(tipX + 0.4 * k, tipY - sg * 3.2 * k); ctx.closePath(); ctx.fill(); // black tip
+    ell(tipX + 1.3 * k, tipY - sg * 1.8 * k, 0.45 * k, 0.45 * k, 0, '#fff');                                    // white mirror spot
+  }
+  ctx.fillStyle = '#ffffff'; ctx.strokeStyle = o; ctx.lineWidth = 0.6;
+  ctx.beginPath(); ctx.moveTo(-5 * k, -1.4 * k); ctx.lineTo(-7 * k, -0.9 * k); ctx.lineTo(-7 * k, 0.9 * k); ctx.lineTo(-5 * k, 1.4 * k); ctx.fill(); ctx.stroke(); // tail
+  ctx.beginPath(); ctx.ellipse(0, 0, 5 * k, 1.8 * k, 0, 0, 7); ctx.fill(); ctx.stroke();                              // body
+  ctx.fillStyle = '#b7c1c8'; ctx.beginPath(); ctx.ellipse(-0.5 * k, 0, 3.2 * k, 1.3 * k, 0, 0, 7); ctx.fill();        // grey back between the wings
+  ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(4.6 * k, 0, 1.6 * k, 0, 7); ctx.fill(); ctx.stroke();           // head
+  ctx.fillStyle = '#f2c230'; ctx.beginPath(); ctx.moveTo(5.9 * k, -0.5 * k); ctx.lineTo(8.3 * k, -0.1 * k); ctx.lineTo(8.3 * k, 0.2 * k); ctx.lineTo(5.9 * k, 0.5 * k); ctx.fill(); // yellow bill
+  ell(7.6 * k, 0.15 * k, 0.35 * k, 0.25 * k, 0, '#d23b3b');                                       // red spot on the bill
+  ell(5 * k, -0.9 * k, 0.3 * k, 0.3 * k, 0, '#111'); ell(5 * k, 0.9 * k, 0.3 * k, 0.3 * k, 0, '#111');
 }
 function sprFish(k, t, col) {
+  // Atlantic mackerel seen through the water: dark barred back, forked tail, silvery sides
   const w = Math.sin(t * 8) * 0.25;
-  ctx.fillStyle = col; ctx.beginPath(); ctx.ellipse(0, 0, 5 * k, 1.7 * k, 0, 0, 7); ctx.fill();
-  ctx.beginPath(); ctx.moveTo(-4 * k, 0); ctx.lineTo(-7.5 * k, (-2 + w * 4) * k); ctx.lineTo(-7.5 * k, (2 + w * 4) * k); ctx.fill();
+  ctx.save(); ctx.globalAlpha *= 0.85;
+  ctx.fillStyle = '#9fb7c4'; ctx.beginPath(); ctx.ellipse(0, 0, 5.2 * k, 1.9 * k, 0, 0, 7); ctx.fill();          // silvery flanks
+  ctx.fillStyle = '#1f4a5e'; ctx.beginPath(); ctx.ellipse(0, 0, 5 * k, 1.1 * k, 0, 0, 7); ctx.fill();            // dark back
+  ctx.strokeStyle = 'rgba(10,30,40,0.8)'; ctx.lineWidth = 0.5;
+  for (let i = -3; i <= 2; i++) { ctx.beginPath(); ctx.moveTo(i * k, -1 * k); ctx.lineTo((i + 0.6) * k, 1 * k); ctx.stroke(); } // bars
+  ctx.fillStyle = '#1f4a5e'; ctx.beginPath(); ctx.moveTo(-4.5 * k, 0); ctx.lineTo(-7.6 * k, (-2.3 + w * 4) * k); ctx.lineTo(-6.6 * k, (w * 4) * k); ctx.lineTo(-7.6 * k, (2.3 + w * 4) * k); ctx.fill(); // forked tail
+  ell(3.8 * k, -0.7 * k, 0.35 * k, 0.35 * k, 0, '#0b1a22');
+  ctx.restore();
 }
 function sprShark(k, t) {
-  const w = Math.sin(t * 3) * 0.2, sil = 'rgba(12, 32, 48, 0.5)';
-  ctx.fillStyle = sil; ctx.beginPath(); ctx.ellipse(0, 0, 14 * k, 3.4 * k, 0, 0, 7); ctx.fill();
-  ctx.beginPath(); ctx.moveTo(3 * k, 2 * k); ctx.lineTo(-2 * k, 7 * k); ctx.lineTo(-1 * k, 2 * k); ctx.moveTo(3 * k, -2 * k); ctx.lineTo(-2 * k, -7 * k); ctx.lineTo(-1 * k, -2 * k); ctx.fill(); // pectoral fins
-  ctx.beginPath(); ctx.moveTo(-12 * k, 0); ctx.lineTo(-19 * k, (-5 + w * 10) * k); ctx.lineTo(-17 * k, (w * 10) * k); ctx.lineTo(-19 * k, (4 + w * 10) * k); ctx.fill(); // tail
-  ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(1 * k, 0, 4.2 * k, 2.2, 4.1); ctx.stroke(); // ripple round the fin
-  ctx.fillStyle = '#56646d'; ctx.beginPath(); ctx.moveTo(3.5 * k, 0); ctx.lineTo(-3 * k, -1.6 * k); ctx.lineTo(-2 * k, 1.2 * k); ctx.fill(); // dorsal fin
+  const w = Math.sin(t * 3) * 0.2, sil = 'rgba(18, 38, 54, 0.62)';
+  ctx.fillStyle = sil; ctx.beginPath();                                                          // torpedo body with pointed snout
+  ctx.moveTo(15 * k, 0); ctx.quadraticCurveTo(10 * k, -3.8 * k, 0, -3.6 * k); ctx.quadraticCurveTo(-9 * k, -2.6 * k, -13 * k, -0.8 * k);
+  ctx.lineTo(-13 * k, 0.8 * k); ctx.quadraticCurveTo(-9 * k, 2.6 * k, 0, 3.6 * k); ctx.quadraticCurveTo(10 * k, 3.8 * k, 15 * k, 0); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(4 * k, 3 * k); ctx.lineTo(-3 * k, 9 * k); ctx.lineTo(-1 * k, 3 * k); ctx.moveTo(4 * k, -3 * k); ctx.lineTo(-3 * k, -9 * k); ctx.lineTo(-1 * k, -3 * k); ctx.fill(); // pectoral fins
+  ctx.beginPath(); ctx.moveTo(-12 * k, 0); ctx.lineTo(-20 * k, (-6 + w * 10) * k); ctx.lineTo(-17 * k, (w * 10) * k); ctx.lineTo(-19 * k, (4 + w * 10) * k); ctx.fill(); // forked tail
+  ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 1.1; ctx.beginPath(); ctx.arc(1 * k, 0, 4.8 * k, 2.1, 4.2); ctx.stroke(); ctx.beginPath(); ctx.arc(-1 * k, 0, 6.5 * k, 2.3, 4.0); ctx.stroke(); // wake around the fin
+  ctx.fillStyle = '#4a5a64'; ctx.strokeStyle = '#1c262c'; ctx.lineWidth = 0.8;
+  ctx.beginPath(); ctx.moveTo(4 * k, 0); ctx.lineTo(-3.5 * k, -2 * k); ctx.lineTo(-2.5 * k, 1.4 * k); ctx.closePath(); ctx.fill(); ctx.stroke(); // dorsal fin above the water
+  ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.beginPath(); ctx.moveTo(3 * k, -0.2 * k); ctx.lineTo(-2.5 * k, -1.5 * k); ctx.lineTo(-1.5 * k, -0.3 * k); ctx.fill();
 }
 function sprWhale(k, t) {
-  const sil = 'rgba(10, 24, 38, 0.55)', w = Math.sin(t * 1.2) * 0.15;
-  ctx.fillStyle = sil; ctx.beginPath(); ctx.ellipse(0, 0, 26 * k, 7 * k, 0, 0, 7); ctx.fill();
-  ctx.beginPath(); ctx.moveTo(-24 * k, 0); ctx.quadraticCurveTo(-32 * k, (-9 + w * 20) * k, -36 * k, (-8 + w * 20) * k); ctx.quadraticCurveTo(-31 * k, (w * 20) * k, -36 * k, (8 + w * 20) * k); ctx.quadraticCurveTo(-32 * k, (9 + w * 20) * k, -24 * k, 0); ctx.fill();
-  ctx.beginPath(); ctx.ellipse(4 * k, 8 * k, 8 * k, 2 * k, 0.5, 0, 7); ctx.ellipse(4 * k, -8 * k, 8 * k, 2 * k, -0.5, 0, 7); ctx.fill(); // flippers
-  const ph = (t * 0.35) % 1;                                                                    // blow every few seconds
-  if (ph < 0.18) { const r = ph / 0.18; ctx.fillStyle = `rgba(255,255,255,${0.8 * (1 - r)})`; for (const [dx, dy, rr] of [[0, 0, 3], [-2, -3, 2.4], [-2, 3, 2.4], [-4, 0, 2]]) { ctx.beginPath(); ctx.arc((18 + dx - r * 4) * k, dy * k * (1 + r), rr * k * (1 + r * 1.5), 0, 7); ctx.fill(); } }
+  // humpback: long pale-edged flippers, knobbly head, broad flukes
+  const w = Math.sin(t * 1.2) * 0.15, body = 'rgba(28, 40, 50, 0.72)', o = 'rgba(10,18,24,0.8)';
+  ctx.strokeStyle = o; ctx.lineWidth = 0.9;
+  for (const sg of [-1, 1]) { ctx.fillStyle = 'rgba(205, 216, 222, 0.8)'; ctx.beginPath(); ctx.ellipse(6 * k, sg * 10 * k, 11 * k, 2.2 * k, -sg * 0.55, 0, 7); ctx.fill(); ctx.stroke(); } // long white flippers
+  ctx.fillStyle = body; ctx.beginPath(); ctx.ellipse(0, 0, 26 * k, 7 * k, 0, 0, 7); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-24 * k, 0); ctx.quadraticCurveTo(-32 * k, (-10 + w * 20) * k, -37 * k, (-9 + w * 20) * k); ctx.quadraticCurveTo(-31 * k, (w * 20) * k, -37 * k, (9 + w * 20) * k); ctx.quadraticCurveTo(-32 * k, (10 + w * 20) * k, -24 * k, 0); ctx.fill(); ctx.stroke(); // flukes
+  ctx.fillStyle = 'rgba(0,0,0,0.35)'; for (let i = 0; i < 5; i++) { ctx.beginPath(); ctx.arc((19 + i * 1.5) * k, ((i % 2) - 0.5) * 2.4 * k, 0.7 * k, 0, 7); ctx.fill(); } // tubercles on the head
+  ell(15.5 * k, -0.7 * k, 0.6 * k, 0.35 * k, 0, '#0b0f12'); ell(15.5 * k, 0.7 * k, 0.6 * k, 0.35 * k, 0, '#0b0f12'); // paired blowholes
+  ell(-4 * k, 0, 1.4 * k, 0.8 * k, 0, 'rgba(0,0,0,0.5)');                                            // small dorsal fin
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.ellipse(0, 0, 29 * k, 9 * k, 0, 0, 7); ctx.stroke(); // slick around the body
+  const ph = (t * 0.35) % 1;
+  if (ph < 0.18) { const r = ph / 0.18; ctx.fillStyle = `rgba(255,255,255,${0.85 * (1 - r)})`; for (const [dx, dy, rr] of [[0, 0, 2.6], [-1.2, -2.2, 2], [-1.2, 2.2, 2], [-2.4, 0, 1.8]]) { ctx.beginPath(); ctx.arc((15.5 + dx * (1 + r)) * k, dy * k * (1 + r), rr * k * (0.6 + r * 1.4), 0, 7); ctx.fill(); } } // spout rises from the blowholes
 }
 function sprCrab(k, t, moving) {
-  const wig = moving ? Math.sin(t * 30) * 0.6 : 0;
-  ell(1 * k, 1.2 * k, 4.5 * k, 3.2 * k, 0, 'rgba(0,0,0,0.12)');
-  ctx.strokeStyle = '#b8401d'; ctx.lineWidth = 1.1 * Math.max(0.8, k);
-  for (let i = 0; i < 3; i++) for (const sgn of [-1, 1]) {
-    const bx = (-2 + i * 2) * k, by = sgn * 2.2 * k;
-    ctx.beginPath(); ctx.moveTo(bx, by * 0.6); ctx.lineTo(bx + (i - 1 + (i % 2 ? wig : -wig)) * 1.5 * k, by + sgn * 2.6 * k); ctx.stroke(); // legs out to each side
+  const wig = moving ? Math.sin(t * 30) * 0.6 : 0, o = '#4a1a0a';
+  ell(1 * k, 1.4 * k, 5 * k, 3.4 * k, 0, 'rgba(0,0,0,0.18)');
+  ctx.strokeStyle = '#a8391a'; ctx.lineWidth = 1.3 * Math.max(0.8, k); ctx.lineCap = 'round';
+  for (let i = 0; i < 4; i++) for (const sgn of [-1, 1]) {
+    const bx = (-2.6 + i * 1.7) * k, by = sgn * 2.2 * k, kx = bx + (i - 1.5 + (i % 2 ? wig : -wig)) * 1.2 * k, ky = by + sgn * 2.2 * k;
+    ctx.beginPath(); ctx.moveTo(bx, by * 0.6); ctx.lineTo(kx, ky); ctx.lineTo(kx + (i - 1.5) * 0.8 * k, ky + sgn * 1.4 * k); ctx.stroke(); // jointed legs
   }
-  ell(0, 0, 3.6 * k, 2.6 * k, 0, '#d9542c'); ell(-0.4 * k, -0.4 * k, 2.4 * k, 1.5 * k, 0, '#e8764a');
-  for (const sgn of [-1, 1]) { ctx.beginPath(); ctx.moveTo(sgn * 1.8 * k, -2 * k); ctx.lineTo(sgn * 3 * k, -4 * k); ctx.stroke(); ell(sgn * 3.2 * k, -4.8 * k, 1.5 * k, 1.1 * k, sgn * 0.5, '#c94a24'); } // claws toward the sea
-  ell(-1 * k, -2.3 * k, 0.45 * k, 0.45 * k, 0, '#111'); ell(1 * k, -2.3 * k, 0.45 * k, 0.45 * k, 0, '#111');
+  ctx.fillStyle = '#d4552b'; ctx.strokeStyle = o; ctx.lineWidth = 0.8;
+  ctx.beginPath(); ctx.ellipse(0, 0, 3.9 * k, 2.8 * k, 0, 0, 7); ctx.fill(); ctx.stroke();               // shell
+  ell(-0.5 * k, 0.4 * k, 2.6 * k, 1.5 * k, 0, '#e87a4c'); ell(-0.8 * k, 0.7 * k, 1.2 * k, 0.6 * k, 0, 'rgba(255,255,255,0.35)'); // highlight
+  for (const sgn of [-1, 1]) {
+    ctx.strokeStyle = '#a8391a'; ctx.lineWidth = 1.3 * Math.max(0.8, k); ctx.beginPath(); ctx.moveTo(sgn * 2 * k, -2 * k); ctx.lineTo(sgn * 3.2 * k, -3.8 * k); ctx.stroke();
+    ctx.fillStyle = '#c94a24'; ctx.strokeStyle = o; ctx.lineWidth = 0.7; ctx.beginPath(); ctx.ellipse(sgn * 3.4 * k, -4.9 * k, 1.7 * k, 1.2 * k, sgn * 0.5, 0, 7); ctx.fill(); ctx.stroke(); // claws toward the sea
+    ctx.strokeStyle = o; ctx.beginPath(); ctx.moveTo(sgn * 3.6 * k, -6 * k); ctx.lineTo(sgn * 3.2 * k, -5 * k); ctx.stroke();
+  }
+  ell(-1 * k, -2.5 * k, 0.5 * k, 0.5 * k, 0, '#111'); ell(1 * k, -2.5 * k, 0.5 * k, 0.5 * k, 0, '#111');
 }
 function sprLobster(k, t) {
-  const tw = Math.sin(t * 2) * 0.3;
-  ctx.strokeStyle = '#6b4a2a'; ctx.lineWidth = 0.7;
-  ctx.beginPath(); ctx.moveTo(4 * k, -0.6 * k); ctx.quadraticCurveTo(9 * k, (-4 + tw) * k, 13 * k, (-5 + tw) * k); ctx.moveTo(4 * k, 0.6 * k); ctx.quadraticCurveTo(9 * k, (4 - tw) * k, 13 * k, (5 - tw) * k); ctx.stroke(); // antennae
-  for (let i = 0; i < 5; i++) ell((-2.5 - i * 1.7) * k, 0, (1.6 - i * 0.12) * k, (1.9 - i * 0.2) * k, 0, i % 2 ? '#3f3a22' : '#4d4528'); // tail segments
-  ctx.fillStyle = '#4d4528'; ctx.beginPath(); ctx.moveTo(-10.5 * k, 0); ctx.lineTo(-13 * k, -2.2 * k); ctx.lineTo(-13 * k, 2.2 * k); ctx.fill(); // tail fan
-  ell(1 * k, 0, 3.4 * k, 2 * k, 0, '#4a4226');                                                  // carapace
-  for (const sgn of [-1, 1]) { ctx.strokeStyle = '#4a4226'; ctx.lineWidth = 1.2 * k; ctx.beginPath(); ctx.moveTo(3 * k, sgn * 1.2 * k); ctx.lineTo(5.5 * k, sgn * 3.2 * k); ctx.stroke();
-    ell(7.5 * k, sgn * 3.6 * k, 2.6 * k, (sgn > 0 ? 1.4 : 1.1) * k, sgn * 0.25, '#3f3a22'); ell(9.3 * k, sgn * 3.9 * k, 0.9 * k, 0.6 * k, 0, '#9a4a22'); } // big claws, rusty tips
+  // Maine lobster (live colours: dark olive-brown with orange-red edges), outlined so it reads on the rocks
+  const tw = Math.sin(t * 2) * 0.3, o = '#140d06';
+  ell(1 * k, 1.2 * k, 12 * k, 4 * k, 0, 'rgba(0,0,0,0.25)');
+  ctx.strokeStyle = '#e2773a'; ctx.lineWidth = 0.8;
+  ctx.beginPath(); ctx.moveTo(4.5 * k, -0.6 * k); ctx.quadraticCurveTo(10 * k, (-4 + tw) * k, 15 * k, (-6 + tw) * k); ctx.moveTo(4.5 * k, 0.6 * k); ctx.quadraticCurveTo(10 * k, (4 - tw) * k, 15 * k, (6 - tw) * k); ctx.stroke(); // antennae
+  ctx.strokeStyle = o; ctx.lineWidth = 0.7;
+  for (let i = 0; i < 5; i++) { ctx.fillStyle = i % 2 ? '#5a4a22' : '#6b5728'; ctx.beginPath(); ctx.ellipse((-2.5 - i * 1.7) * k, 0, (1.7 - i * 0.12) * k, (2 - i * 0.2) * k, 0, 0, 7); ctx.fill(); ctx.stroke(); } // tail segments
+  ctx.fillStyle = '#b8562a'; ctx.beginPath(); ctx.moveTo(-10.5 * k, 0); ctx.lineTo(-13.5 * k, -2.5 * k); ctx.lineTo(-13 * k, 0); ctx.lineTo(-13.5 * k, 2.5 * k); ctx.closePath(); ctx.fill(); ctx.stroke(); // tail fan
+  for (const sgn of [-1, 1]) {
+    ctx.strokeStyle = o; ctx.lineWidth = 1.6 * k; ctx.beginPath(); ctx.moveTo(3 * k, sgn * 1.2 * k); ctx.lineTo(5.6 * k, sgn * 3.4 * k); ctx.stroke();
+    ctx.strokeStyle = '#6b5728'; ctx.lineWidth = 1 * k; ctx.beginPath(); ctx.moveTo(3 * k, sgn * 1.2 * k); ctx.lineTo(5.6 * k, sgn * 3.4 * k); ctx.stroke();
+    ctx.fillStyle = sgn > 0 ? '#5f4c22' : '#6b5728'; ctx.strokeStyle = o; ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.ellipse(8 * k, sgn * 3.9 * k, (sgn > 0 ? 3 : 2.5) * k, (sgn > 0 ? 1.6 : 1.2) * k, sgn * 0.25, 0, 7); ctx.fill(); ctx.stroke(); // crusher and pincer claws
+    ctx.fillStyle = '#d9662f'; ctx.beginPath(); ctx.ellipse(10.4 * k, sgn * 4.4 * k, 1 * k, 0.7 * k, sgn * 0.25, 0, 7); ctx.fill(); ctx.stroke(); // orange claw tips
+  }
+  ctx.fillStyle = '#6b5728'; ctx.strokeStyle = o; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.ellipse(1 * k, 0, 3.7 * k, 2.2 * k, 0, 0, 7); ctx.fill(); ctx.stroke(); // carapace
+  ell(0.5 * k, -0.6 * k, 2.4 * k, 0.7 * k, 0, 'rgba(255,220,160,0.35)');                          // shine
+  ctx.fillStyle = 'rgba(184,86,42,0.7)'; for (const [x, y] of [[-0.5, 0.8], [2, 0.6], [-3.5, -0.4], [-6.5, 0.5]]) { ctx.beginPath(); ctx.arc(x * k, y * k, 0.45 * k, 0, 7); ctx.fill(); } // mottling
+  ell(4.2 * k, -0.9 * k, 0.4 * k, 0.4 * k, 0, '#000'); ell(4.2 * k, 0.9 * k, 0.4 * k, 0.4 * k, 0, '#000');
 }
 function sprSeal(k, t) {
-  const bob = Math.sin(t * 0.8) * 0.3;
-  ell(1 * k, 1.5 * k, 10 * k, 3.6 * k, 0, 'rgba(0,0,0,0.15)');
-  ell(0, 0, 9 * k, 3.4 * k, bob * 0.1, '#6f6863');
-  ctx.fillStyle = 'rgba(40,36,34,0.35)'; for (const [x, y] of [[-3, -1], [1, 1.2], [-6, 0.8], [3, -1.4]]) { ctx.beginPath(); ctx.arc(x * k, y * k, 0.6 * k, 0, 7); ctx.fill(); } // spots
-  ell(-9.5 * k, -1.4 * k, 2.2 * k, 0.9 * k, -0.5, '#5f5853'); ell(-9.5 * k, 1.4 * k, 2.2 * k, 0.9 * k, 0.5, '#5f5853'); // rear flippers
-  ell(2 * k, -3.4 * k, 2 * k, 0.8 * k, -0.6, '#5f5853'); ell(2 * k, 3.4 * k, 2 * k, 0.8 * k, 0.6, '#5f5853');       // fore flippers
-  ell(8.5 * k, bob * k, 2.8 * k, 2.4 * k, 0, '#655e59');                                         // head
-  ell(9.6 * k, (bob - 0.9) * k, 0.45 * k, 0.45 * k, 0, '#111'); ell(9.6 * k, (bob + 0.9) * k, 0.45 * k, 0.45 * k, 0, '#111');
-  ell(11.1 * k, bob * k, 0.5 * k, 0.5 * k, 0, '#222');                                           // nose
+  const bob = Math.sin(t * 0.8) * 0.3, o = '#241f1c';
+  ctx.lineWidth = 1.1; ctx.strokeStyle = o;
+  ell(1.5 * k, 2 * k, 10.5 * k, 4 * k, 0, 'rgba(0,0,0,0.28)');                                     // shadow on the rocks
+  const flip = (x, y, rx, ry, r) => { ctx.fillStyle = '#7d736b'; ctx.beginPath(); ctx.ellipse(x, y, rx, ry, r, 0, 7); ctx.fill(); ctx.stroke(); };
+  flip(-9.8 * k, -1.6 * k, 2.4 * k, 1 * k, -0.5); flip(-9.8 * k, 1.6 * k, 2.4 * k, 1 * k, 0.5);   // rear flippers
+  flip(2 * k, -3.7 * k, 2.2 * k, 0.9 * k, -0.6); flip(2 * k, 3.7 * k, 2.2 * k, 0.9 * k, 0.6);     // fore flippers
+  ctx.fillStyle = '#a89c90'; ctx.beginPath(); ctx.ellipse(0, 0, 9 * k, 3.5 * k, bob * 0.1, 0, 7); ctx.fill(); ctx.stroke(); // body
+  ell(-0.5 * k, -1.2 * k, 6.5 * k, 1.3 * k, 0, 'rgba(255,255,255,0.35)');                         // sheen on the back
+  ctx.fillStyle = 'rgba(60,50,44,0.55)'; for (const [x, y] of [[-3, -1], [1, 1.3], [-6, 0.9], [3.5, -1.5], [-1, 0.2]]) { ctx.beginPath(); ctx.arc(x * k, y * k, 0.65 * k, 0, 7); ctx.fill(); } // mottled spots
+  ctx.fillStyle = '#9c9084'; ctx.beginPath(); ctx.ellipse(8.6 * k, bob * k, 2.9 * k, 2.5 * k, 0, 0, 7); ctx.fill(); ctx.stroke(); // head
+  ell(9.8 * k, (bob - 0.95) * k, 0.55 * k, 0.55 * k, 0, '#111'); ell(9.8 * k, (bob + 0.95) * k, 0.55 * k, 0.55 * k, 0, '#111');
+  ell(11.3 * k, bob * k, 0.6 * k, 0.55 * k, 0, '#1b1b1b');                                        // nose
+  ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = 0.5;
+  for (const sg of [-1, 1]) { ctx.beginPath(); ctx.moveTo(11 * k, (bob + sg * 0.6) * k); ctx.lineTo(13 * k, (bob + sg * 1.6) * k); ctx.stroke(); } // whiskers
+}
+function sprPorpoise(k, t, ph) {
+  const s = Math.sin(t * 1.7 + ph); // rolls up to breathe, then slips under
+  if (s < 0.15) { ctx.globalAlpha *= 0.3; ctx.fillStyle = 'rgb(14, 38, 54)'; ctx.beginPath(); ctx.ellipse(0, 0, 8.5 * k, 2.2 * k, 0, 0, 7); ctx.fill(); return; }
+  const a = Math.min(1, (s - 0.15) * 2.5);
+  ctx.strokeStyle = `rgba(255,255,255,${0.75 * a})`; ctx.lineWidth = 1.1; ctx.beginPath(); ctx.ellipse(0, 0, 10 * k, 3.6 * k, 0, 0, 7); ctx.stroke(); // ring of surf
+  ctx.globalAlpha *= a;
+  ctx.fillStyle = '#8795a0'; ctx.beginPath(); ctx.ellipse(0.5 * k, 0, 8.4 * k, 2.6 * k, 0, 0, 7); ctx.fill();        // pale grey flanks
+  ctx.fillStyle = '#323c44'; ctx.strokeStyle = '#151b20'; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.ellipse(0, 0, 8 * k, 1.8 * k, 0, 0, 7); ctx.fill(); ctx.stroke(); // dark back
+  ell(1.5 * k, -0.5 * k, 5 * k, 0.5 * k, 0, 'rgba(255,255,255,0.35)');                                  // wet sheen
+  ctx.fillStyle = '#1d252b'; ctx.beginPath(); ctx.moveTo(1.5 * k, 0); ctx.lineTo(-2.8 * k, -1.5 * k); ctx.lineTo(-2.2 * k, 1 * k); ctx.closePath(); ctx.fill(); ctx.stroke(); // small triangular fin
+  ell(6.5 * k, 0, 0.5 * k, 0.5 * k, 0, 'rgba(255,255,255,0.8)');                                         // blowhole spray
 }
 function sprShell(kind, k, rot) {
   ctx.rotate(rot);
@@ -655,24 +731,29 @@ function drawFun(time) {
   // lobsters on the jetty rocks, lobster buoys off the tips, seals hauled out on breakwaters
   for (const s of S.structures) {
     if (s.type === 'jetty' || (isStem(s) && s.tip - shoreAt(s.x) > 120)) {
-      spr(s.x + 9, s.tip - 22, 1, () => { ctx.rotate(-1.2); sprLobster(k * 0.8, time); }, 0.95);
-      if (s.tip < YL - 30) { spr(s.x + 30, s.tip + 12, 1, () => sprBuoy(k, time, '#e04b3f', '#f5d34a')); spr(s.x - 26, s.tip + 22, 1, () => sprBuoy(k, time + 1, '#2f78d6', '#ffffff')); }
+      const nL = !S.show.lobsters ? 0 : s.type === 'jetty' ? 3 : 1;
+      for (let i = 0; i < nL; i++) { const side = i % 2 ? -1 : 1, yy = s.tip - 16 - i * 38; if (yy < shoreAt(s.x) + 25) break;
+        spr(s.x + side * 7, yy, 1, () => { ctx.rotate(side > 0 ? -1.3 : 1.9); sprLobster(k * 0.62, time + i); }, 1); }
+      if (S.show.boats && s.tip < YL - 30) { spr(s.x + 30, s.tip + 12, 1, () => sprBuoy(k, time, '#e04b3f', '#f5d34a')); spr(s.x - 26, s.tip + 22, 1, () => sprBuoy(k, time + 1, '#2f78d6', '#ffffff')); }
     }
-    if (s.type === 'breakwater') spr((s.x1 + s.x2) / 2 + 15 * Math.sin(time * 0.2), s.y + 3, 1, () => sprSeal(k, time));
+    if (S.show.seals && s.type === 'breakwater') spr((s.x1 + s.x2) / 2 + 15 * Math.sin(time * 0.2), s.y + 3, 1, () => sprSeal(k * 0.95, time));
   }
   const m5 = m >= 4 && m <= 8;
   for (const c of S.critters) {
-    if ((c.kind === 'boat' || c.kind === 'sail') && stormy) continue;
+    if ((c.kind === 'boat' || c.kind === 'sail') && (stormy || !S.show.boats)) continue;
+    if (c.kind === 'gull' && !S.show.birds) continue;
+    if (!S.show[{ fish: 'fish', shark: 'sharks', whale: 'whales', porpoise: 'porpoises', crab: 'crabs' }[c.kind]] && ['fish', 'shark', 'whale', 'porpoise', 'crab'].includes(c.kind)) continue;
     if (c.kind === 'sail' && !m5) continue;
     const dir = c.vx > 0 ? 1 : -1;
-    if (c.kind === 'crab') { const moving = Math.sin(time * 7 + c.x) > -0.2; spr(c.x, shoreAt(c.x) - c.off, 1, () => sprCrab(k * 0.9, time, moving), Math.min(1, c.life)); continue; }
-    const y = c.kind === 'gull' ? c.y + 18 * Math.sin(time * 1.7) : c.y;
+    if (c.kind === 'crab') { const moving = Math.sin(time * 7 + c.x) > -0.2; spr(c.x, shoreAt(c.x) - c.off, 1, () => sprCrab(k * 0.72, time, moving), Math.min(1, c.life)); continue; }
+    const y = c.kind === 'gull' ? c.y + 18 * Math.sin(time * 1.7 + (c.ph || 0)) : c.y;
     if (c.kind === 'boat') spr(c.x, y, dir, () => sprLobsterBoat(k, time));
     else if (c.kind === 'sail') spr(c.x, y, dir, () => sprSailboat(k * 1.1, time));
-    else if (c.kind === 'gull') spr(c.x, y, dir, () => sprGull(k, time));
+    else if (c.kind === 'gull') spr(c.x, y, dir, () => sprGull(k, time + (c.ph || 0)));
     else if (c.kind === 'fish') spr(c.x, y, dir, () => { for (const [dx, dy] of [[0, 0], [-9, 4], [-7, -5]]) { ctx.save(); ctx.translate(dx * k, dy * k); sprFish(k * c.size * 1.4, time + dx, 'rgba(14, 44, 64, 0.42)'); ctx.restore(); } });
     else if (c.kind === 'shark') spr(c.x, y, dir, () => sprShark(k, time));
     else if (c.kind === 'whale') spr(c.x, y, dir, () => sprWhale(k, time));
+    else if (c.kind === 'porpoise') spr(c.x, y, dir, () => sprPorpoise(k, time, c.ph));
   }
 }
 // ---------- cars on the road (top-down, driving on the right) ----------
@@ -715,7 +796,7 @@ function riverCells(s) {
   return { i1, i2, jettied };
 }
 function drawRiver(s, time) {
-  const sy = shoreAt(s.x), hw = s.w / 2, bank = hw + 40;
+  const sy = shoreAt(s.x), hw = s.w / 2, bank = riverBank(s);
   // salt marsh banks where the houses and dune would be
   ctx.fillStyle = '#8eab6b'; ctx.fillRect(px(s.x - bank), py(DUNE_TOE), px(2 * bank), (DUNE_TOE - 12) * sc); // from the road up to the dune line
   const rr = seeded(Math.round(s.x) + 3); ctx.strokeStyle = 'rgba(60, 90, 45, 0.6)'; ctx.lineWidth = 1;
@@ -723,7 +804,7 @@ function drawRiver(s, time) {
   // sandy river banks on the beach
   ctx.fillStyle = '#e4cc98'; ctx.beginPath(); ctx.ellipse(px(s.x), py((DUNE_TOE + sy) / 2), px(hw + 25), Math.max(4, (sy - DUNE_TOE) / 2 * sc), 0, 0, 7); ctx.fill();
   // the channel: gentle meander, widening at the mouth
-  const wig = X => 0.25 * s.w * Math.sin(X * 0.03 + s.x);
+  const wig = X => Math.min(0.15 * s.w, 18) * Math.sin(X * 0.03 + s.x);
   ctx.fillStyle = '#3f8fb2'; ctx.beginPath();
   const pts = 10;
   for (let i = 0; i <= pts; i++) { const Y = sy * i / pts, ww = hw * (1 + 0.5 * Math.pow(i / pts, 3)); const X = s.x - ww + wig(Y) * (1 - i / pts); i ? ctx.lineTo(px(X), py(Y)) : ctx.moveTo(px(X), CH); }
@@ -734,7 +815,7 @@ function drawRiver(s, time) {
   ctx.setLineDash([]); ctx.lineDashOffset = 0;
   // bridge carrying the road over the river
   // the road continues straight across: pavement over the whole marsh, railings over the water
-  const rx1 = px(s.x - bank), rx2 = px(s.x + bank), bx1 = px(s.x - hw - 12), bx2 = px(s.x + hw + 12);
+  const rx1 = px(s.x - bank), rx2 = px(s.x + bank), bx1 = px(s.x - hw - Math.min(0.15 * s.w, 18) - 10), bx2 = px(s.x + hw + Math.min(0.15 * s.w, 18) + 10);
   ctx.fillStyle = '#6f757b'; ctx.fillRect(rx1, py(12), rx2 - rx1, 12 * sc);
   ctx.fillStyle = '#c9c4b8'; ctx.fillRect(bx1, py(12.8), bx2 - bx1, Math.max(1.5, 1.2 * sc)); ctx.fillRect(bx1, py(0.4) - Math.max(1.5, 1.2 * sc), bx2 - bx1, Math.max(1.5, 1.2 * sc));
   ctx.strokeStyle = 'rgba(255, 230, 140, 0.8)'; ctx.setLineDash([8, 8]); ctx.lineWidth = 1;
@@ -780,13 +861,20 @@ function nestSeasonTick(w) {
   }
 }
 function drawPlover(cx, cy, k) {
-  ctx.save(); ctx.translate(cx, cy); ctx.scale(k, k);
-  ctx.fillStyle = '#d9c6a0'; ctx.beginPath(); ctx.ellipse(0, 0, 4.2, 2.8, 0, 0, 7); ctx.fill();
-  ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.ellipse(0.4, 1.1, 3, 1.4, 0, 0, 7); ctx.fill();
-  ctx.fillStyle = '#d9c6a0'; ctx.beginPath(); ctx.arc(3.6, -1.8, 1.9, 0, 7); ctx.fill();
-  ctx.strokeStyle = '#1d1d1d'; ctx.lineWidth = 0.9; ctx.beginPath(); ctx.moveTo(2.1, -0.6); ctx.lineTo(4.8, -0.4); ctx.stroke();
-  ctx.fillStyle = '#e8892b'; ctx.beginPath(); ctx.moveTo(5.3, -2); ctx.lineTo(6.9, -1.6); ctx.lineTo(5.3, -1.3); ctx.fill();
-  ctx.fillStyle = '#1d1d1d'; ctx.beginPath(); ctx.arc(4, -2.2, 0.45, 0, 7); ctx.fill();
+  // piping plover: pale sand back, white underparts, black neck band and forehead bar, orange bill with a black tip
+  const o = '#2e2416';
+  ctx.save(); ctx.translate(cx, cy); ctx.scale(k, k); ctx.lineWidth = 0.55; ctx.strokeStyle = o;
+  ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.ellipse(0.6, 0.9, 4.8, 2.9, 0, 0, 7); ctx.fill();        // shadow
+  ctx.fillStyle = '#e9dcc0'; ctx.beginPath(); ctx.ellipse(0, 0, 4.4, 2.9, 0, 0, 7); ctx.fill(); ctx.stroke();         // back
+  ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.ellipse(0.6, 1.2, 3.1, 1.4, 0, 0, 7); ctx.fill();                    // white belly
+  ctx.fillStyle = '#cdbb95'; ctx.beginPath(); ctx.moveTo(-4.2, -0.4); ctx.lineTo(-6, 0); ctx.lineTo(-4.2, 0.6); ctx.fill(); ctx.stroke(); // tail
+  ctx.fillStyle = '#111'; ctx.beginPath(); ctx.ellipse(2.4, -1, 0.9, 2.2, 0.5, 0, 7); ctx.fill();                      // black neck band
+  ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(3.8, -1.9, 2, 0, 7); ctx.fill(); ctx.stroke();                   // white face
+  ctx.fillStyle = '#e9dcc0'; ctx.beginPath(); ctx.arc(3.6, -2.4, 1.5, Math.PI, Math.PI * 2.1); ctx.fill();              // sandy crown
+  ctx.fillStyle = '#111'; ctx.fillRect(3.1, -3.5, 1.9, 0.55);                                                          // black forehead bar
+  ctx.fillStyle = '#f08a24'; ctx.beginPath(); ctx.moveTo(5.5, -2.2); ctx.lineTo(7.4, -1.8); ctx.lineTo(5.5, -1.3); ctx.fill(); // orange bill
+  ctx.fillStyle = '#111'; ctx.beginPath(); ctx.moveTo(6.8, -1.95); ctx.lineTo(7.4, -1.8); ctx.lineTo(6.8, -1.6); ctx.fill();   // black tip
+  ctx.beginPath(); ctx.arc(4.4, -2.2, 0.5, 0, 7); ctx.fill();                                                          // eye
   ctx.restore();
 }
 function drawScrape(cx, cy, r, eggs, wet) {
@@ -828,7 +916,7 @@ function drawNests() {
       ctx.beginPath(); ctx.moveTo(cx - 6, cy - 5); ctx.lineTo(cx + 6, cy + 5); ctx.moveTo(cx + 6, cy - 5); ctx.lineTo(cx - 6, cy + 5); ctx.stroke();
       continue;
     }
-    const r = clamp(sc * 9, 5, 12), k = clamp(sc * 2.5, 1, 2.3);
+    const r = clamp(sc * 9, 5, 12), k = clamp(sc * 2.1, 1.1, 2);
     for (let i = 0; i < n.pairs; i++) {
       const nx = x1 + (x2 - x1) * (i + 1) / (n.pairs + 1) - r * 0.6;
       if (season && !n.washed) { drawScrape(nx, cy, r, 4, false); drawPlover(nx + r * 2.3, cy - r * 0.2, k); }
@@ -837,7 +925,26 @@ function drawNests() {
     }
   }
 }
-function houseVisible(h) { return !S.structures.some(r => r.type === 'river' && Math.abs(h.x - r.x) < r.w / 2 + 45); }
+const riverBank = r => r.w / 2 + Math.min(0.15 * r.w, 18) + 36; // half-width of the marsh + bridge around a river
+const HOUSE_WALLS = ['#f28b82', '#f6d365', '#8ec5e8', '#9fd49a', '#fdfaf2', '#c9b6ea', '#f7b77a', '#7fd3c7'];
+const HOUSE_ROOFS = ['#b23a31', '#3b4f63', '#2f6b4a', '#5a3e2b', '#2f78d6', '#6b3fa0'];
+function drawHouse(w, h, seedX, atRisk) {
+  // a simple, friendly house icon: coloured walls, a pitched roof, a door and a window
+  const r = seeded(Math.round(seedX) + 17), wall = HOUSE_WALLS[Math.floor(r() * HOUSE_WALLS.length)], roof = HOUSE_ROOFS[Math.floor(r() * HOUSE_ROOFS.length)];
+  const bw = w * 0.82, bh = h * 0.72, top = -h * 0.2, o = '#2a2f33';
+  ctx.fillStyle = 'rgba(0,0,0,0.2)'; ctx.fillRect(-bw / 2 + 2, top + 2, bw, bh);                          // shadow
+  ctx.fillStyle = wall; ctx.strokeStyle = o; ctx.lineWidth = 1; ctx.fillRect(-bw / 2, top, bw, bh); ctx.strokeRect(-bw / 2, top, bw, bh); // walls
+  ctx.fillStyle = roof; ctx.beginPath(); ctx.moveTo(-w / 2, top + 0.5); ctx.lineTo(0, top - h * 0.62); ctx.lineTo(w / 2, top + 0.5); ctx.closePath(); ctx.fill(); ctx.stroke(); // roof
+  ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.beginPath(); ctx.moveTo(-w / 2 + 2, top); ctx.lineTo(0, top - h * 0.56); ctx.lineTo(0, top); ctx.closePath(); ctx.fill(); // sunlit half
+  const dw = bw * 0.22, dh = bh * 0.62;
+  ctx.fillStyle = '#6b4a34'; ctx.fillRect(-bw * 0.3, top + bh - dh, dw, dh); ctx.strokeRect(-bw * 0.3, top + bh - dh, dw, dh);          // door
+  ell(-bw * 0.3 + dw * 0.78, top + bh - dh * 0.45, Math.max(0.6, dw * 0.08), Math.max(0.6, dw * 0.08), 0, '#f2c230');                // doorknob
+  const ws = Math.min(bw * 0.26, bh * 0.42), wx = bw * 0.08, wy = top + bh * 0.22;
+  ctx.fillStyle = '#bfe3f5'; ctx.fillRect(wx, wy, ws, ws); ctx.strokeRect(wx, wy, ws, ws);                                             // window
+  ctx.beginPath(); ctx.moveTo(wx + ws / 2, wy); ctx.lineTo(wx + ws / 2, wy + ws); ctx.moveTo(wx, wy + ws / 2); ctx.lineTo(wx + ws, wy + ws / 2); ctx.lineWidth = 0.6; ctx.stroke();
+  if (atRisk) { ctx.strokeStyle = '#d95926'; ctx.lineWidth = 2; ctx.setLineDash([4, 2]); ctx.strokeRect(-w / 2 - 3, top - h * 0.66, w + 6, bh + h * 0.7); ctx.setLineDash([]); }
+}
+function houseVisible(h) { return !S.structures.some(r => r.type === 'river' && Math.abs(h.x - r.x) < riverBank(r) + 12); }
 function houseRaw(h) {
   for (const s of S.structures) if (s.type === 'seawall' && h.x >= s.x1 && h.x <= s.x2) return 'ok';
   const sh = Math.min(shoreAt(h.x - 15), shoreAt(h.x), shoreAt(h.x + 15));
@@ -857,32 +964,34 @@ function rebuild(h, quiet) {
 }
 
 function drawChart() {
-  const w = ch.clientWidth, h = 110; cctx.clearRect(0, 0, w, h);
+  // same horizontal scale as the beach: cell i sits right under the same stretch of beach
+  const w = ch.clientWidth, h = 120; cctx.clearRect(0, 0, w, h);
   const cs = getComputedStyle(document.documentElement);
-  const cOr = cs.getPropertyValue('--orange').trim(), cGr = cs.getPropertyValue('--green').trim(), cMu = cs.getPropertyValue('--muted').trim(), cLn = cs.getPropertyValue('--line').trim();
+  const cOr = cs.getPropertyValue('--orange').trim(), cGr = cs.getPropertyValue('--green').trim(), cMu = cs.getPropertyValue('--muted').trim(), cLn = cs.getPropertyValue('--line').trim(), cBg = cs.getPropertyValue('--panel').trim();
   let mx = 10; for (let i = 0; i < N; i++) mx = Math.max(mx, Math.abs(y[i] - Y0));
   mx = Math.ceil(mx / 10) * 10;
-  const left = 46, top = 8, bottom = h - 18, mid = (top + bottom) / 2, sy = (bottom - top) / 2 / mx, bw = (w - left) / N;
+  const top = 6, bottom = h - 20, mid = (top + bottom) / 2, sy = (bottom - top) / 2 / mx, bw = w / N;
   cctx.strokeStyle = cLn; cctx.lineWidth = 1;
-  [top, mid, bottom].forEach(yy => { cctx.beginPath(); cctx.moveTo(left, yy + 0.5); cctx.lineTo(w, yy + 0.5); cctx.stroke(); });
+  [top, mid, bottom].forEach(yy => { cctx.beginPath(); cctx.moveTo(0, yy + 0.5); cctx.lineTo(w, yy + 0.5); cctx.stroke(); });
   for (let i = 0; i < N; i++) {
     const d = y[i] - Y0; cctx.fillStyle = d >= 0 ? cGr : cOr;
-    const x = left + i * bw; cctx.fillRect(x, d >= 0 ? mid - d * sy : mid, Math.max(1, bw - 0.4), Math.abs(d) * sy);
+    cctx.fillRect(i * bw, d >= 0 ? mid - d * sy : mid, Math.max(1, bw - 0.4), Math.abs(d) * sy);
   }
-  cctx.fillStyle = cMu; cctx.font = '11px ' + getComputedStyle(document.body).fontFamily; cctx.textAlign = 'right';
-  cctx.fillText('+' + mx + ' m', left - 6, top + 8); cctx.fillText('0', left - 6, mid + 4); cctx.fillText('−' + mx + ' m', left - 6, bottom);
-  cctx.textAlign = 'left'; cctx.fillText(`${leftDir()} end`, left, h - 3); cctx.textAlign = 'right'; cctx.fillText(`${rightDir()} end · 1,500 m`, w, h - 3);
-  cctx.textAlign = 'left';
   for (const s of S.structures) {
-    const xs = s.x !== undefined ? [s.x] : [(s.x1 + s.x2) / 2];
-    cctx.fillStyle = COL[s.type];
-    xs.forEach(X => { const x = left + X / XL * (w - left); cctx.beginPath(); cctx.moveTo(x, bottom + 1); cctx.lineTo(x - 4, bottom + 8); cctx.lineTo(x + 4, bottom + 8); cctx.fill(); });
+    const X = s.x !== undefined ? s.x : (s.x1 + s.x2) / 2, x = X / XL * w;
+    cctx.fillStyle = COL[s.type]; cctx.beginPath(); cctx.moveTo(x, bottom + 1); cctx.lineTo(x - 4, bottom + 8); cctx.lineTo(x + 4, bottom + 8); cctx.fill();
   }
+  cctx.font = '11px ' + getComputedStyle(document.body).fontFamily;
+  const label = (txt, x, yy, align) => { cctx.textAlign = align; const tw = cctx.measureText(txt).width, x0 = align === 'left' ? x : x - tw;
+    cctx.globalAlpha = 0.85; cctx.fillStyle = cBg; cctx.fillRect(x0 - 3, yy - 10, tw + 6, 13); cctx.globalAlpha = 1; cctx.fillStyle = cMu; cctx.fillText(txt, x, yy); };
+  label('+' + mx + ' m', 6, top + 11, 'left'); label('0', 6, mid + 4, 'left'); label('−' + mx + ' m', 6, bottom - 2, 'left');
+  label(`← ${leftDir()} end`, 6, h - 4, 'left'); label(`${rightDir()} end · 1,500 m →`, w - 6, h - 4, 'right');
+  cctx.textAlign = 'left';
 }
 
 // ---------- tools ----------
 const TOOLS = [
-  { id: 'inspect', label: 'Look', hint: '<b>Look:</b> hover over the beach to read its width and the sand drift at that spot.',
+  { id: 'inspect', label: 'Look', hint: '<b>Look:</b> hover anywhere to see what is there: water depth and waves, beach width and sand drift, or details of a structure, river or nesting area.',
     svg: '<circle cx="10" cy="10" r="6" fill="none" stroke="currentColor" stroke-width="2"/><path d="M15 15l5 5" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>' },
   { id: 'groin', label: 'Groin', hint: '<b>Groin:</b> click the water where you want the tip, or click the beach for a 80 m groin. Drag up or down to change its length.',
     svg: '<rect x="2" y="16" width="20" height="6" rx="1" fill="#e2c68c"/><rect x="10" y="3" width="4" height="15" rx="2" fill="currentColor"/>' },
@@ -957,6 +1066,12 @@ function addStructure(d) {
   if (s.type === 'seawall') { s.i1 = clamp(Math.floor(s.x1 / DX), 0, N - 1); s.i2 = clamp(Math.floor(s.x2 / DX), 0, N - 1); }
   if (s.type === 'river') { s.cell = clamp(Math.floor(s.x / DX), 0, N - 1); if (!s.w) s.w = 60; }
   S.structures.push(s); placed(); refreshTerms();
+  const before = S.nests.length; S.nests = S.nests.filter(n => !nestBlocked(n.x, n.pairs));
+  if (S.nests.length < before && !S.silent) toast('🪹 A nesting area was in the way, so it was moved off the beach.');
+}
+function nestBlocked(x, pairs) {
+  const hw = 14 + 16 * pairs;
+  return S.structures.some(s => (isStem(s) && Math.abs(s.x - x) < hw + 8) || (s.type === 'seawall' && x + hw > s.x1 && x - hw < s.x2) || (s.type === 'river' && Math.abs(s.x - x) < riverBank(s) + hw));
 }
 function toast(msg) {
   const box = $('toasts'); if (!box) return;
@@ -999,7 +1114,7 @@ cv.addEventListener('pointerdown', e => {
     if (h && Math.abs(h.x - p.X) < 50) { if (h.gone) rebuild(h); else toast('🏡 That house is still standing.'); }
     return;
   }
-  if (S.tool === 'nest') { S.nests.push({ x: snapX(p.X), pairs: 2, washed: false }); placed(); return; }
+  if (S.tool === 'nest') { const x = snapX(p.X); if (nestBlocked(x, 2)) { toast('🚫 There\'s a structure in the way. Nesting areas need open sand.'); return; } S.nests.push({ x, pairs: 2, washed: false }); placed(); return; }
   draft = makeDraft(S.tool, p);
   if (draft) cv.setPointerCapture(e.pointerId);
 });
@@ -1017,7 +1132,25 @@ function showTip(e, p) {
   const sh = shoreAt(p.X), q = faceQ(p.X), width = sh - DUNE_TOE, i = clamp(Math.floor(p.X / DX), 0, N - 1);
   const nest = S.nests.find(n => Math.abs(n.x - p.X) < 14 + 16 * n.pairs && p.Y < DUNE_TOE + 40 && p.Y > DUNE_TOE - 10);
   const nestTxt = nest ? `<br><b>Shorebird nesting area</b>: ${nest.pairs} plover pair${nest.pairs > 1 ? 's' : ''}, ${{ ok: 'safe', risk: 'at risk (narrow beach)', lost: 'lost (no dry beach)' }[nestStatus(nest)]}${nest.washed && inSeason() ? ', washed out this season' : ''}` : '';
-  tip.innerHTML = `<span class="mono">x = ${Math.round(p.X)} m</span><br>Dry beach ${Math.max(0, width).toFixed(0)} m wide (${(sh - Y0 >= 0 ? '+' : '−') + Math.abs(sh - Y0).toFixed(1)} m)<br>Drift ${fmtQ(q)}<br>Breaking waves ${(Hc[i] || 0).toFixed(2)} m${nestTxt}`;
+  const where = `<span class="mono">x = ${Math.round(p.X)} m</span>`;
+  const onWall = S.structures.find(st => st.type === 'seawall' && p.X >= st.x1 && p.X <= st.x2 && Math.abs(p.Y - st.y) < 8);
+  const onRock = S.structures.find(st => (isStem(st) && Math.abs(p.X - st.x) < 12 && p.Y > STEM_ROOT && p.Y < st.tip + 6) || (st.type === 'breakwater' && p.X > st.x1 && p.X < st.x2 && Math.abs(p.Y - st.y) < 10) || (st.type === 'tgroin' && Math.abs(p.Y - st.tip) < 10 && Math.abs(p.X - st.x) < st.head));
+  const river = S.structures.find(st => st.type === 'river' && Math.abs(p.X - st.x) < st.w / 2 && p.Y < sh);
+  if (onRock) {
+    const name = { groin: 'Groin', jetty: 'Jetty', tgroin: 'T-groin (spur)', breakwater: 'Breakwater' }[onRock.type];
+    tip.innerHTML = `🪨 <b>${name}</b> · ${where}` + (isStem(onRock) ? `<br>Sticks out ${Math.max(0, onRock.tip - sh).toFixed(0)} m past the shoreline<br>Sand bypassing it: ${Math.round((onRock.byp ?? 1) * 100)}%` : `<br>${(onRock.y - sh).toFixed(0)} m offshore`);
+  } else if (onWall) {
+    tip.innerHTML = `🧱 <b>Seawall</b> · ${where}<br>Dry beach in front: ${Math.max(0, sh - onWall.y).toFixed(0)} m`;
+  } else if (river) {
+    tip.innerHTML = `🏞️ <b>River</b> · ${where}<br>${river.w} m wide, bringing ${fmtVol(river.q)} m³ of sand a year` + (riverCells(river).jettied ? '<br>(its sand goes out past the jetties)' : '');
+  } else if (p.Y > sh) {
+    const d = p.Y - sh, depth = Aprof() * Math.pow(d, 2 / 3), inSurf = d < surfWidthAt(p.X);
+    tip.innerHTML = `🌊 <b>Water</b> · ${where}<br>${d.toFixed(0)} m from the shoreline, about ${depth.toFixed(1)} m deep<br>${inSurf ? `In the surf zone: waves breaking at ${(Hc[i] || 0).toFixed(2)} m<br>Sand drifting ${fmtQ(q)}` : 'Beyond the breakers'}`;
+  } else if (p.Y < DUNE_TOE) {
+    tip.innerHTML = `${p.Y < 14 ? '🚗 <b>Road</b>' : p.Y < 42 ? '🏡 <b>Houses</b>' : '🌾 <b>Dunes</b>'} · ${where}<br>Dry beach in front: ${Math.max(0, width).toFixed(0)} m${nestTxt}`;
+  } else {
+    tip.innerHTML = `🏖️ <b>Beach</b> · ${where}<br>Dry beach ${Math.max(0, width).toFixed(0)} m wide (${(sh - Y0 >= 0 ? '+' : '−') + Math.abs(sh - Y0).toFixed(1)} m since the start)<br>Sand drifting ${fmtQ(q)}${nestTxt}`;
+  }
   tip.style.left = Math.min(e.clientX - r.left, r.width - 280) + 'px'; tip.style.top = Math.min(e.clientY - r.top, r.height - 130) + 'px';
   tip.hidden = false;
 }
@@ -1057,6 +1190,17 @@ $('rw').addEventListener('input', () => {
   const last = [...S.structures].reverse().find(s => s.type === 'river');
   if (last) { last.w = S.riverW; last.q = 700 * S.riverW; refreshTerms(true); }
 });
+document.querySelectorAll('.showall').forEach(b => b.addEventListener('click', () => {
+  const on = b.dataset.showall === '1';
+  for (const key of Object.keys(S.show)) S.show[key] = on;
+  document.querySelectorAll('.showbtn').forEach(x => x.setAttribute('aria-pressed', on));
+  if (!on) S.critters = S.critters.filter(c => !['shark', 'whale', 'porpoise', 'crab'].includes(c.kind));
+}));
+document.querySelectorAll('.showbtn').forEach(b => b.addEventListener('click', () => {
+  const key = b.dataset.show; S.show[key] = !S.show[key]; b.setAttribute('aria-pressed', S.show[key]);
+  const kindOf = { sharks: 'shark', whales: 'whale', porpoises: 'porpoise', crabs: 'crab' }[key];
+  if (kindOf && !S.show[key]) S.critters = S.critters.filter(c => c.kind !== kindOf);
+}));
 $('btnRebuild').addEventListener('click', () => {
   const gone = S.houses.filter(h => h.gone && houseVisible(h));
   if (!gone.length) { toast('🏡 All the houses are standing.'); return; }
@@ -1231,7 +1375,7 @@ function loadPlace(k) {
   Object.assign(S, { normal: pl.normal, turn: pl.turn, expo: pl.expo, d50: pl.d50, hstar: pl.hstar, K1: pl.K1, slr: 2 });
   S.structures = []; S.storm = null;
   S.nests = (pl.nests || []).map(([x, pairs]) => ({ x, pairs, washed: false }));
-  setMode('cycle'); resetBeach(); pl.build();
+  setMode('cycle'); resetBeach(); S.silent = true; pl.build(); S.silent = false;
   if (pl.fill) { const keep = S.vol; S.vol = pl.fill.V; S.silent = true; nourish(pl.fill.x); S.silent = false; S.vol = keep; }
   S.sandAdded = pl.fill ? pl.fill.V : 0;
   syncSliders(); refreshTerms(); setPlaying(false);
@@ -1281,20 +1425,20 @@ function masterTeX(a) {
   return String.raw`\begin{aligned}` + lines.join(String.raw`\\[4pt]`) + String.raw`\end{aligned}`;
 }
 const TERMS = [
-  { key: 'budget', core: true, c: 'blue', title: 'Sand budget', tag: 'always on',
+  { key: 'budget', core: true, c: 'blue', title: 'Sand budget', tag: '✓ always on',
     tex: String.raw`\frac{\partial y_s}{\partial t} = -\frac{1}{D}\frac{\partial Q}{\partial x}`,
     text: 'Think of the beach as a row of buckets. Where more sand leaves a stretch than arrives (\\(Q\\) grows along the shore), the shoreline moves back. \\(D\\) is the depth of beach that moves: closure depth \\(h_*\\) plus berm height \\(B\\).',
     live: [['D', 'D'], ['Beach length', 'len']] },
-  { key: 'drift', core: true, c: 'blue', title: 'Longshore drift', tag: 'always on',
-    tex: String.raw`Q = \left(H_b^2C_g\right)_b\,a_1\sin 2(\theta_b-\phi),\qquad \phi=\arctan\frac{\partial y}{\partial x}`,
+  { key: 'drift', core: true, c: 'blue', title: 'Longshore drift', tag: '✓ always on',
+    tex: String.raw`\begin{gathered}Q = \left(H_b^2C_g\right)_b\,a_1\sin 2(\theta_b-\phi)\\ \phi=\arctan\frac{\partial y}{\partial x}\end{gathered}`,
     text: 'Waves that hit the beach at an angle push sand along it, fastest at 45° and not at all when they arrive straight on. \\(\\phi\\) is the local tilt of the shoreline, so a beach that turns to face the waves slows its own drift.',
     live: [['Drift mid-beach', 'Qmid'], ['\\(a_1\\)', 'a1']] },
-  { key: 'waves', core: true, c: 'blue', title: 'Waves reaching the beach', tag: 'always on',
-    tex: String.raw`H_b = 0.39\,g^{1/5}\left(T H_0^2\right)^{2/5},\qquad \frac{\sin\theta_b}{C_b} = \frac{\sin\theta_0}{C_0}`,
+  { key: 'waves', core: true, c: 'blue', title: 'Waves reaching the beach', tag: '✓ always on',
+    tex: String.raw`\begin{gathered}H_b = 0.39\,g^{1/5}\left(T H_0^2\right)^{2/5}\\ \frac{\sin\theta_b}{C_b} = \frac{\sin\theta_0}{C_0}\end{gathered}`,
     text: 'Offshore waves of height \\(H_0\\) and period \\(T\\) grow as the water shallows and break at height \\(H_b\\). They also bend (refract) to face the beach, so a steep offshore angle becomes a small one at the breakers.',
     live: [['\\(H_0\\)', 'H0'], ['\\(H_b\\)', 'Hb'], ['\\(\\theta_0 \\to \\theta_b\\)', 'ang'], ['Surf zone', 'yB']] },
-  { key: 'cross', core: true, c: 'blue', title: 'Beach breathing (cross-shore)', tag: 'always on',
-    tex: String.raw`\frac{\partial y_c}{\partial t}=k\,(y_{eq}-y_c),\qquad y_{eq}=-W\frac{0.068H_b+S}{B+1.28H_b}`,
+  { key: 'cross', core: true, c: 'blue', title: 'Beach breathing (cross-shore)', tag: '✓ always on',
+    tex: String.raw`\begin{gathered}\frac{\partial y_c}{\partial t}=k\,(y_{eq}-y_c)\\ y_{eq}=-W\frac{0.068H_b+S}{B+1.28H_b}\end{gathered}`,
     text: 'Big waves pull sand off the beach into an offshore bar, so the beach narrows; calm waves push it back. Erosion is fast (\\(k \\approx 150\\) per year, days) and recovery is slow (\\(k \\approx 8\\) per year, weeks). This is why beaches are narrower in winter.',
     live: [['\\(y_{eq}\\) now', 'yeq'], ['\\(y_c\\) now', 'yc']] },
   { key: 'smooth', core: true, c: 'blue', title: 'Why bumps spread out', tag: 'the big idea',
@@ -1306,7 +1450,7 @@ const TERMS = [
     text: 'A groin blocks the part of the surf zone it reaches, so sand piles up on the updrift side and the downdrift side starves. \\(y_G\\) is how far it sticks out past the shoreline and \\(y_B\\) is the surf-zone width. Once sand reaches the tip, it bypasses. Waves are also calmer in its lee (Bakker, 1968).',
     live: [['Bypassing', 'byp']], lock: 'Add a groin, spur or jetty' },
   { key: 'breakwater', c: 'purple', title: 'Breakwater shadow', tag: 'from your structures',
-    tex: String.raw`\begin{gathered}Q = \left(H_b^2C_g\right)_b\left[a_1\sin2(\theta_b-\phi) - a_2\cos(\theta_b-\phi)\frac{\partial H_b}{\partial x}\right]\\ H_b \to K_d\,H_b \ \text{behind the breakwater}\end{gathered}`,
+    tex: String.raw`\begin{gathered}Q = \left(H_b^2C_g\right)_b\big[a_1\sin2(\theta_b-\phi)\\ \qquad -\,a_2\cos(\theta_b-\phi)\,\frac{\partial H_b}{\partial x}\big]\\ H_b \to K_d\,H_b\ \text{(in its shadow)}\end{gathered}`,
     text: 'Behind a breakwater the waves are smaller (\\(K_d \\lt 1\\)) because they only reach it by bending around the ends (diffraction). Sand flows from where waves are big to where they are small, building a bulge called a salient. If it reaches the breakwater it becomes a tombolo.',
     live: [['Smallest \\(K_d\\) on shore', 'kd'], ['Shape', 'salient']], lock: 'Add a breakwater or T-groin' },
   { key: 'seawall', c: 'slate', title: 'Seawall', tag: 'from your structures',
@@ -1344,20 +1488,30 @@ function refreshTerms(flash) {
   const master = $('master');
   renderMaster(masterTeX(a));
   if (!firstBuild) { master.classList.remove('flash'); void master.offsetWidth; master.classList.add('flash'); }
-  const terms = $('terms'); terms.innerHTML = '';
-  const locked = $('locked'); locked.innerHTML = '';
+  const core = $('termsCore'), extra = $('termsExtra'), pCore = $('partsCore'), pExtra = $('partsExtra');
+  core.innerHTML = ''; extra.innerHTML = ''; pCore.innerHTML = ''; pExtra.innerHTML = '';
+  const onList = [], offList = [];
   for (const t of TERMS) {
     const on = t.core || a[t.key];
-    if (!on) { const sp = document.createElement('span'); sp.style.setProperty('--c', COLVAR[t.c]); sp.innerHTML = `<b>+</b> ${t.lock} to add “${t.title.toLowerCase()}”`; locked.appendChild(sp); continue; }
-    const el = document.createElement('article'); el.className = 'term'; el.dataset.key = t.key; el.style.setProperty('--c', COLVAR[t.c]);
-    if (!firstBuild && !t.core && !prev[t.key]) el.classList.add('new');
-    el.innerHTML = `<header><h3>${t.title}</h3><span class="tag">${t.tag}</span></header><div class="tex">\\[${t.tex}\\]</div><p>${t.text}</p><dl class="live">${t.live.map(([k, id]) => `<div><dt>${k}</dt><dd data-live="${id}">–</dd></div>`).join('')}</dl>`;
-    terms.appendChild(el);
+    const el = document.createElement('article'); el.className = 'term'; el.id = 'term-' + t.key; el.dataset.key = t.key; el.style.setProperty('--c', COLVAR[t.c]);
+    if (on) {
+      if (!firstBuild && !t.core && !prev[t.key]) el.classList.add('new');
+      el.innerHTML = `<header><h3>${t.title}</h3><span class="tag">${t.tag}</span></header><div class="tex">\\[${t.tex}\\]</div><p>${t.text}</p><dl class="live">${t.live.map(([k, id]) => `<div><dt>${k}</dt><dd data-live="${id}">–</dd></div>`).join('')}</dl>`;
+    } else {
+      el.classList.add('locked-card');
+      el.innerHTML = `<header><h3>${t.title}</h3><span class="tag">🔒 not on yet</span></header><div class="tex">\\[${t.tex}\\]</div><p class="lock"><b>${t.lock}</b> to switch this on.</p>`;
+    }
+    (t.core ? core : extra).appendChild(el);
+    const li = document.createElement('li'); li.style.setProperty('--c', COLVAR[t.c]);
+    li.innerHTML = `<i></i><a href="#term-${t.key}">${t.title}</a>`; if (!on) li.title = 'Not on yet';
+    if (!on) li.className = 'off';
+    if (t.core) pCore.appendChild(li); else (on ? onList : offList).push(li);
   }
-  // non-core cards first after master for visibility
-  [...terms.querySelectorAll('.term')].filter(el => !TERMS.find(t => t.key === el.dataset.key).core).reverse().forEach(el => terms.prepend(el));
+  // active additions first among the extras, locked ones after
+  [...extra.querySelectorAll('.term.locked-card')].forEach(el => extra.appendChild(el));
+  onList.concat(offList).forEach(li => pExtra.appendChild(li));
   firstBuild = false;
-  typeset([terms, document.querySelector('.math-head')]);
+  typeset([core, extra, document.querySelector('.math-head'), document.querySelector('.glossary')]);
   updateLive();
 }
 let masterSrc = '';
@@ -1367,7 +1521,7 @@ function renderMaster(tex) {
     MathJax.tex2svgPromise(tex, { display: true }).then(node => { if (masterSrc === tex) { el.innerHTML = ''; el.appendChild(node); } }).catch(() => { el.innerHTML = '<div class="tex-fallback"></div>'; el.firstChild.textContent = tex; });
   } else { el.innerHTML = '<div class="tex-fallback">Loading equations…</div>'; }
 }
-window.__mjReady = () => { renderMaster(masterSrc); typeset([$('terms'), document.querySelector('.math-head'), document.querySelector('.glossary')]); };
+window.__mjReady = () => { renderMaster(masterSrc); typeset([$('termsCore'), $('termsExtra'), document.querySelector('.math-head'), document.querySelector('.glossary')]); };
 
 function updateLive() {
   const w = W || currentWaves(), Dd = Dact(), A = Aprof();

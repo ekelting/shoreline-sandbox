@@ -18,7 +18,7 @@
   <header class="top">
     <div>
       <h1>Shoreline <span>Sandbox</span> <span aria-hidden="true">🏖️</span></h1>
-      <p>Build groins, jetties and breakwaters on a 1.5&nbsp;km beach, choose the waves and the season, call in a storm, and watch where the sand goes. Everything you add changes the equation on the right.</p>
+      <p>Build groins, jetties and breakwaters on a 1.5&nbsp;km beach, choose the waves and the season, call in a storm, and watch where the sand goes. Everything you add changes the mathematical model below.</p>
     </div>
     <div class="head-side">
       <div class="seg theme-seg" id="themeSeg" role="group" aria-label="Colour theme">
@@ -58,8 +58,30 @@
         <div class="tsl-wrap"><label class="tsl" for="rw">🏞️ River width <output id="rwo" for="rw"></output></label>
         <input type="range" id="rw" min="20" max="200" step="5"></div>
         <button class="btn" id="btnRebuild" type="button">🔨 Rebuild all houses</button>
+        <div class="show-toggles" role="group" aria-label="Show or hide animals and boats">
+          <span>Show:</span>
+          <button type="button" class="showbtn" data-show="boats" aria-pressed="true">⛵ Boats</button>
+          <button type="button" class="showbtn" data-show="birds" aria-pressed="true">🐦 Birds</button>
+          <button type="button" class="showbtn" data-show="fish" aria-pressed="true">🐟 Fish</button>
+          <button type="button" class="showbtn" data-show="lobsters" aria-pressed="true">🦞 Lobsters</button>
+          <button type="button" class="showbtn" data-show="seals" aria-pressed="true">🦭 Seals</button>
+          <button type="button" class="showbtn" data-show="porpoises" aria-pressed="true">🐬 Porpoises</button>
+          <button type="button" class="showbtn" data-show="sharks" aria-pressed="true">🦈 Sharks</button>
+          <button type="button" class="showbtn" data-show="whales" aria-pressed="true">🐋 Whales</button>
+          <button type="button" class="showbtn" data-show="crabs" aria-pressed="true">🦀 Crabs</button>
+          <span class="show-sep" aria-hidden="true"></span>
+          <button type="button" class="showall" data-showall="1">All</button>
+          <button type="button" class="showall" data-showall="0">None</button>
+        </div>
       </div>
       <div class="tool-hint" id="toolHint"></div>
+    </section>
+    <section class="places" aria-labelledby="hPlaces">
+      <div class="places-row">
+        <h2 id="hPlaces">🗺️ Maine beaches</h2>
+        <div class="chips" id="placeChips" role="group" aria-label="Load a Maine beach"></div>
+      </div>
+      <p class="place-blurb" id="placeBlurb"></p>
     </section>
   </div>
 
@@ -73,29 +95,14 @@
         <div class="ov ov-tip" id="tip" hidden></div>
         <div class="ov ov-toasts" id="toasts" aria-live="polite"></div>
       </div>
-  </div>
-
-  <main class="layout">
-    <div class="stack">
-
-      <section class="places" aria-labelledby="hPlaces">
-        <div class="places-row">
-          <h2 id="hPlaces">🗺️ Maine beaches</h2>
-          <div class="chips" id="placeChips" role="group" aria-label="Load a Maine beach"></div>
-        </div>
-        <p class="place-blurb" id="placeBlurb"></p>
-      </section>
-
-
-      <div class="card">
-        <div class="chart-head">
-          <h2>📈 How far the shoreline has moved since the start</h2>
-          <div class="legend"><span><i style="background:var(--green)"></i>Beach grew</span><span><i style="background:var(--orange)"></i>Beach eroded</span></div>
-        </div>
-        <canvas id="chart"></canvas>
+    <div class="chartbox">
+      <div class="chart-head">
+        <h2>📈 How far the shoreline has moved since the start</h2>
+        <div class="legend"><span><i style="background:var(--green)"></i>Beach grew</span><span><i style="background:var(--orange)"></i>Beach eroded</span></div>
       </div>
-
-      <div class="stats" id="stats">
+      <canvas id="chart" aria-label="Shoreline change along the beach, lined up with the beach above"></canvas>
+    </div>
+    <div class="stats" id="stats">
         <div class="stat"><div class="k">⏱️ Time</div><div class="v" id="stTime">0.0 yr</div><div class="s" id="stTimeS">since start</div></div>
         <div class="stat" id="stAvgBox"><div class="k">📏 Average change</div><div class="v" id="stAvg">0.0 m</div><div class="s">whole beach</div></div>
         <div class="stat bad"><div class="k">🌊 Most erosion</div><div class="v" id="stWorst">0 m</div><div class="s" id="stWorstS">—</div></div>
@@ -105,105 +112,129 @@
         <div class="stat"><div class="k">🚚 Sand added</div><div class="v" id="stSand">0</div><div class="s">m³ from nourishment</div></div>
       </div>
 
-      <div class="controls">
-        <section class="ctl" aria-labelledby="hWaves">
-          <h2 id="hWaves">🌊 Waves and seasons</h2>
-          <div class="seg" id="modeSeg" role="group" aria-label="Wave climate">
-            <button data-mode="cycle">Year-round</button>
-            <button data-mode="winter">Winter</button>
-            <button data-mode="spring">Spring</button>
-            <button data-mode="summer">Summer</button>
-            <button data-mode="fall">Fall</button>
-            <button data-mode="custom">Custom</button>
-          </div>
-          <p class="note" id="modeNote"></p>
-          <div class="dial-wrap">
-            <svg id="dial" viewBox="0 0 220 132" role="slider" tabindex="0" aria-label="Wave direction" aria-valuemin="-75" aria-valuemax="75">
-              <rect class="sea" x="0" y="0" width="220" height="114" rx="10"/>
-              <path class="arc" d="M 23.4 62 A 90 90 0 0 1 196.6 62"/>
-              <g id="dialTicks"></g>
-              <rect class="sand" x="4" y="114" width="212" height="16" rx="4"/>
-              <text class="lbl" id="dlL" x="8" y="108">N</text>
-              <text class="lbl" id="dlC" x="110" y="12" text-anchor="middle">E</text>
-              <text class="lbl" id="dlR" x="212" y="108" text-anchor="end">S</text>
-              <g id="dialCrests"></g>
-              <line class="arrow" id="dialArrow" x1="0" y1="0" x2="0" y2="0"/>
-              <path id="dialHead" fill="var(--blue)" d=""/>
-              <circle class="knob" id="dialKnob" r="9" cx="110" cy="22"/>
-            </svg>
-            <div class="dial-read">
-              <div class="big" id="dirBig">from E</div>
-              <div class="mono" id="dirSmall">0° off straight-on</div>
-              <div class="note" style="margin-top:4px">Drag the dot to choose where waves come from.</div>
-            </div>
-          </div>
-          <div class="row"><label for="h0">Wave height</label><input type="range" id="h0" min="0.2" max="3" step="0.05"><output id="h0o" for="h0"></output></div>
-          <div class="row"><label for="per">Wave period</label><input type="range" id="per" min="4" max="15" step="0.5"><output id="pero" for="per"></output></div>
-        </section>
+  </div>
 
-        <section class="ctl" aria-labelledby="hWx">
-          <h2 id="hWx">⛈️ Storms and sea level</h2>
-          <p class="sub">Storms raise the water (surge) and send big waves for a few days. The sim slows down so you can watch.</p>
-          <div class="btns">
-            <button class="btn storm" id="btnNoreaster">🌬️ Send a nor'easter</button>
-            <button class="btn storm trop" id="btnTropical">🌀 Send a tropical storm</button>
+    <div class="controls">
+      <section class="ctl" aria-labelledby="hWaves">
+        <h2 id="hWaves">🌊 Waves and seasons</h2>
+        <div class="modes" id="modeSeg" role="group" aria-label="Wave climate">
+          <div class="mode-row seasons">
+            <button data-mode="winter" style="--sc:#4f86d0">❄️ Winter</button>
+            <button data-mode="spring" style="--sc:#3a9d58">🌷 Spring</button>
+            <button data-mode="summer" style="--sc:#e39a1c">☀️ Summer</button>
+            <button data-mode="fall" style="--sc:#c45a28">🍂 Fall</button>
           </div>
-          <div class="row"><label for="slr">Sea-level rise</label><input type="range" id="slr" min="0" max="20" step="0.5"><output id="slro" for="slr"></output></div>
-          <p class="note">Portland, Maine's tide gauge has recorded roughly 2&nbsp;mm/yr since 1912. Try 10–15&nbsp;mm/yr for late-century projections.</p>
-        </section>
-
-        <section class="ctl" aria-labelledby="hExp">
-          <h2 id="hExp">🧪 Try an experiment</h2>
-          <div class="exp">
-            <button data-exp="groins"><b>🪨 Groin field in winter</b><span>Four groins, steady winter waves from the northeast. Sand piles against the north side of each one.</span></button>
-            <button data-exp="jetty"><b>⚓ River-mouth jetty</b><span>A long jetty beside a river. Sand piles up on one side and the other side starves.</span></button>
-            <button data-exp="salient"><b>🏝️ Breakwater salient</b><span>Waves straight on, breakwater offshore. The beach grows a bump toward it.</span></button>
-            <button data-exp="squeeze"><b>🧱 Seawall squeeze</b><span>Fast sea-level rise against a seawall, downdrift of a groin. The dry beach disappears.</span></button>
+          <div class="mode-row">
+            <button data-mode="cycle" style="--sc:#2f78d6">🔁 Year-round</button>
+            <button data-mode="custom" style="--sc:#6a7680">🎛️ Custom</button>
           </div>
-        </section>
+        </div>
+        <p class="note" id="modeNote"></p>
+        <div class="dial-wrap">
+          <svg id="dial" viewBox="0 0 220 132" role="slider" tabindex="0" aria-label="Wave direction" aria-valuemin="-75" aria-valuemax="75">
+            <rect class="sea" x="0" y="0" width="220" height="114" rx="10"/>
+            <path class="arc" d="M 23.4 62 A 90 90 0 0 1 196.6 62"/>
+            <g id="dialTicks"></g>
+            <rect class="sand" x="4" y="114" width="212" height="16" rx="4"/>
+            <text class="lbl" id="dlL" x="8" y="108">N</text>
+            <text class="lbl" id="dlC" x="110" y="12" text-anchor="middle">E</text>
+            <text class="lbl" id="dlR" x="212" y="108" text-anchor="end">S</text>
+            <g id="dialCrests"></g>
+            <line class="arrow" id="dialArrow" x1="0" y1="0" x2="0" y2="0"/>
+            <path id="dialHead" fill="var(--blue)" d=""/>
+            <circle class="knob" id="dialKnob" r="9" cx="110" cy="22"/>
+          </svg>
+          <div class="dial-read">
+            <div class="big" id="dirBig">from E</div>
+            <div class="mono" id="dirSmall">0° off straight-on</div>
+            <div class="note" style="margin-top:4px">Drag the dot to choose where waves come from.</div>
+          </div>
+        </div>
+        <div class="row"><label for="h0">Wave height</label><input type="range" id="h0" min="0.2" max="3" step="0.05"><output id="h0o" for="h0"></output></div>
+        <div class="row"><label for="per">Wave period</label><input type="range" id="per" min="4" max="15" step="0.5"><output id="pero" for="per"></output></div>
+      </section>
 
-        <section class="ctl" aria-labelledby="hAdv">
-          <h2 id="hAdv">⚙️ Advanced settings</h2>
-          <p class="sub">The Maine beach buttons fill these in for each place.</p>
-          <div class="row"><label for="nrm">Beach faces</label><input type="range" id="nrm" min="0" max="359" step="1"><output id="nrmo" for="nrm"></output></div>
-          <div class="row"><label for="trn">Wave turning</label><input type="range" id="trn" min="-60" max="60" step="1"><output id="trno" for="trn"></output></div>
-          <div class="row"><label for="expo">Wave exposure</label><input type="range" id="expo" min="0.2" max="1.5" step="0.05"><output id="expoo" for="expo"></output></div>
-          <div class="row"><label for="k1">Sand mobility K₁</label><input type="range" id="k1" min="0.05" max="0.8" step="0.01"><output id="k1o" for="k1"></output></div>
-          <div class="row"><label for="d50">Grain size</label><input type="range" id="d50" min="0.15" max="1" step="0.05"><output id="d50o" for="d50"></output></div>
-          <div class="row"><label for="hs">Closure depth h*</label><input type="range" id="hs" min="4" max="14" step="0.5"><output id="hso" for="hs"></output></div>
-          <p class="note"><b>Beach faces</b> is the compass direction straight out to sea. <b>Wave turning</b> is how much headlands and the bay bend the offshore waves clockwise before they arrive. <b>Wave exposure</b> scales the offshore wave heights (below 1 for sheltered bays). K₁ scales every transport rate (GENESIS uses 0.1–1). Coarser sand gives a steeper profile and a narrower surf zone. The closure depth is how deep waves move sand; the berm height B is fixed at 2&nbsp;m.</p>
-        </section>
-      </div>
+      <section class="ctl" aria-labelledby="hWx">
+        <h2 id="hWx">⛈️ Storms and sea level</h2>
+        <p class="sub">Storms raise the water (surge) and send big waves for a few days. The sim slows down so you can watch.</p>
+        <div class="btns">
+          <button class="btn storm" id="btnNoreaster">🌬️ Send a nor'easter</button>
+          <button class="btn storm trop" id="btnTropical">🌀 Send a tropical storm</button>
+        </div>
+        <div class="row"><label for="slr">Sea-level rise</label><input type="range" id="slr" min="0" max="20" step="0.5"><output id="slro" for="slr"></output></div>
+        <p class="note">Portland, Maine's tide gauge has recorded roughly 2&nbsp;mm/yr since 1912. Try 10–15&nbsp;mm/yr for late-century projections.</p>
+      </section>
+
+      <section class="ctl" aria-labelledby="hExp">
+        <h2 id="hExp">🧪 Try an experiment</h2>
+        <div class="exp">
+          <button data-exp="groins"><b>🪨 Groin field in winter</b><span>Four groins, steady winter waves from the northeast. Sand piles against the north side of each one.</span></button>
+          <button data-exp="jetty"><b>⚓ River-mouth jetty</b><span>A long jetty beside a river. Sand piles up on one side and the other side starves.</span></button>
+          <button data-exp="salient"><b>🏝️ Breakwater salient</b><span>Waves straight on, breakwater offshore. The beach grows a bump toward it.</span></button>
+          <button data-exp="squeeze"><b>🧱 Seawall squeeze</b><span>Fast sea-level rise against a seawall, downdrift of a groin. The dry beach disappears.</span></button>
+        </div>
+      </section>
+
+      <section class="ctl" aria-labelledby="hAdv">
+        <h2 id="hAdv">⚙️ Advanced settings</h2>
+        <p class="sub">The Maine beach buttons fill these in for each place.</p>
+        <div class="row"><label for="nrm">Beach faces</label><input type="range" id="nrm" min="0" max="359" step="1"><output id="nrmo" for="nrm"></output></div>
+        <div class="row"><label for="trn">Wave turning</label><input type="range" id="trn" min="-60" max="60" step="1"><output id="trno" for="trn"></output></div>
+        <div class="row"><label for="expo">Wave exposure</label><input type="range" id="expo" min="0.2" max="1.5" step="0.05"><output id="expoo" for="expo"></output></div>
+        <div class="row"><label for="k1">Sand mobility K₁</label><input type="range" id="k1" min="0.05" max="0.8" step="0.01"><output id="k1o" for="k1"></output></div>
+        <div class="row"><label for="d50">Grain size</label><input type="range" id="d50" min="0.15" max="1" step="0.05"><output id="d50o" for="d50"></output></div>
+        <div class="row"><label for="hs">Closure depth h*</label><input type="range" id="hs" min="4" max="14" step="0.5"><output id="hso" for="hs"></output></div>
+        <p class="note"><b>Beach faces</b> is the compass direction straight out to sea. <b>Wave turning</b> is how much headlands and the bay bend the offshore waves clockwise before they arrive. <b>Wave exposure</b> scales the offshore wave heights (below 1 for sheltered bays). K₁ scales every transport rate (GENESIS uses 0.1–1). Coarser sand gives a steeper profile and a narrower surf zone. The closure depth is how deep waves move sand; the berm height B is fixed at 2&nbsp;m.</p>
+      </section>
     </div>
 
-    <aside class="math" aria-labelledby="hMath">
-      <div class="math-head">
-        <h2 id="hMath">🧮 The equation right now</h2>
-        <p>The shoreline position \(y\) at each spot \(x\) along the beach changes over time \(t\). New terms appear as you add things.</p>
+  <section class="mathsec" id="math" aria-labelledby="hMath">
+    <div class="math-head">
+      <h2 id="hMath">🧮 The math behind your beach</h2>
+      <p>The model tracks the shoreline position \(y\) at every spot \(x\) along the beach as time \(t\) passes. Some parts of the equation are always working; others switch on when you build something, add sand or change the weather. New parts appear in colour.</p>
+    </div>
+    <div class="math-top">
+      <div class="math-left">
+        <div class="master-card">
+          <div class="mc-label">The equation right now</div>
+          <div class="master" id="master"></div>
+        </div>
+        <h3 class="mgroup-h">✅ Always on <span>the core of every beach</span></h3>
+        <div class="terms" id="termsCore"></div>
       </div>
-      <div class="master" id="master"></div>
-      <div class="terms" id="terms"></div>
-      <div class="locked" id="locked"></div>
-      <details class="glossary">
-        <summary>What the symbols mean</summary>
-        <dl>
-          <dt>\(x\)</dt><dd>distance along the beach (0 at the left end)</dd>
-          <dt>\(y\)</dt><dd>shoreline position, measured seaward from the road</dd>
-          <dt>\(y_s,\ y_c\)</dt><dd>the long-term (alongshore) part and the storm/season (cross-shore) part</dd>
-          <dt>\(Q\)</dt><dd>longshore sand transport, m³ per year (positive = moving to the right)</dd>
-          <dt>\(D\)</dt><dd>active depth of the beach: closure depth \(h_*\) + berm height \(B\)</dd>
-          <dt>\(H_0,\ T,\ \theta_0\)</dt><dd>offshore wave height, period and approach angle</dd>
-          <dt>\(H_b,\ \theta_b\)</dt><dd>wave height and angle where waves break</dd>
-          <dt>\(C_g\)</dt><dd>speed of wave energy at breaking, \(\sqrt{g\,h_b}\)</dd>
-          <dt>\(\phi\)</dt><dd>local tilt of the shoreline</dd>
-          <dt>\(a_1,\ a_2\)</dt><dd>transport constants, built from \(K_1,\ K_2\), sand density and porosity</dd>
-          <dt>\(A\)</dt><dd>profile shape factor from grain size (Dean profile \(h = A\,d^{2/3}\))</dd>
-          <dt>\(S,\ \eta\)</dt><dd>storm surge, and mean sea level</dd>
-          <dt>\(W,\ W_*\)</dt><dd>width of the part of the profile that responds to storms / to sea level</dd>
-        </dl>
-      </details>
-    </aside>
-  </main>
+      <div class="math-right">
+      <div class="parts-card">
+        <div class="mc-label">What's in it</div>
+        <div class="parts-cols" id="parts">
+          <div><div class="parts-h">✅ Always on</div><ul class="parts" id="partsCore"></ul></div>
+          <div><div class="parts-h">✨ Added by you</div><ul class="parts" id="partsExtra"></ul></div>
+        </div>
+        <p class="parts-key"><i></i> faded, dashed = not switched on yet</p>
+
+      </div>
+        <div class="gloss-card glossary">
+          <div class="mc-label">What the symbols mean</div>
+          <dl>
+            <dt>\(x\)</dt><dd>distance along the beach (0 at the left end)</dd>
+            <dt>\(y\)</dt><dd>shoreline position, measured seaward from the road</dd>
+            <dt>\(y_s,\ y_c\)</dt><dd>the long-term (alongshore) part and the storm/season (cross-shore) part</dd>
+            <dt>\(Q\)</dt><dd>longshore sand transport, m³ per year (positive = moving to the right)</dd>
+            <dt>\(D\)</dt><dd>active depth of the beach: closure depth \(h_*\) + berm height \(B\)</dd>
+            <dt>\(H_0,\ T,\ \theta_0\)</dt><dd>offshore wave height, period and approach angle</dd>
+            <dt>\(H_b,\ \theta_b\)</dt><dd>wave height and angle where waves break</dd>
+            <dt>\(C_g\)</dt><dd>speed of wave energy at breaking, \(\sqrt{g\,h_b}\)</dd>
+            <dt>\(\phi\)</dt><dd>local tilt of the shoreline</dd>
+            <dt>\(a_1,\ a_2\)</dt><dd>transport constants, built from \(K_1,\ K_2\), sand density and porosity</dd>
+            <dt>\(A\)</dt><dd>profile shape factor from grain size (Dean profile \(h = A\,d^{2/3}\))</dd>
+            <dt>\(S,\ \eta\)</dt><dd>storm surge, and mean sea level</dd>
+            <dt>\(W,\ W_*\)</dt><dd>width of the part of the profile that responds to storms / to sea level</dd>
+          </dl>
+        </div>
+      </div>
+    </div>
+    <h3 class="mgroup-h">✨ Added by you <span>switch these on from the beach</span></h3>
+    <div class="terms" id="termsExtra"></div>
+  </section>
 
   <div class="about">
     <section>
