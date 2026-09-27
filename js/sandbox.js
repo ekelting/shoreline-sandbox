@@ -252,16 +252,26 @@ function advance(dtReal) {
 // ---------- canvas ----------
 const stage = document.getElementById('stage'), cv = document.getElementById('beach'), ctx = cv.getContext('2d');
 const ch = document.getElementById('chart'), cctx = ch.getContext('2d');
-let CW = 900, CH = 420, sc = 0.6, dpr = 1;
+let CW = 900, CH = 420, sc = 0.6, sy = 0.6, dpr = 1;
 function resize() {
   dpr = Math.min(2, window.devicePixelRatio || 1);
-  CW = stage.clientWidth; sc = CW / XL; CH = Math.round(YL * sc);
+  CW = stage.clientWidth; sc = CW / XL;
+  // fit the beach so the controls, the beach and the chart all show on one screen: on a short screen the
+  // view is squeezed top-to-bottom (at most to 45%) instead of pushing the chart off the bottom
+  const natural = YL * sc; let avail = natural;
+  if (window.innerWidth > 900) {
+    const cb = document.querySelector('.chartbox'), tr = document.querySelector('.toprow'), hd = document.querySelector('header.top');
+    const below = (cb ? cb.offsetHeight : 130) + 16, rowH = tr ? tr.offsetHeight + 10 : 0, headH = hd ? hd.offsetHeight + 28 : 0;
+    avail = window.innerHeight - below - rowH - headH;                        // everything, header included
+    if (avail < natural * 0.62) avail = window.innerHeight - below - rowH - 12; // otherwise let the title scroll away
+  }
+  CH = Math.round(clamp(avail, natural * 0.45, natural)); sy = CH / YL;
   cv.width = Math.round(CW * dpr); cv.height = Math.round(CH * dpr); cv.style.height = CH + 'px';
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const cw = ch.clientWidth; ch.width = Math.round(cw * dpr); ch.height = Math.round(120 * dpr);
+  const cw = ch.clientWidth; ch.width = Math.round(cw * dpr); ch.height = Math.round(96 * dpr);
   cctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
-const px = X => X * sc, py = Y => CH - Y * sc;
+const px = X => X * sc, py = Y => CH - Y * sy;
 function shoreAt(X) {
   const f = X / DX - 0.5, i = clamp(Math.floor(f), 0, N - 1), j = Math.min(N - 1, i + 1), t = clamp(f - i, 0, 1);
   return y[i] + (y[j] - y[i]) * t;
@@ -408,7 +418,7 @@ function draw(time) {
   // dune + road + houses
   // the dune runs from the houses up to its toe; storms cut its face back (x_d = S.dune)
   const duneFace = X => DUNE_TOE - S.dune[cellOf(X)];
-  ctx.fillStyle = '#e3c88e'; ctx.fillRect(0, py(DUNE_TOE), CW, (DUNE_TOE - 40) * sc);   // bare sand where the dune was cut away
+  ctx.fillStyle = '#e3c88e'; ctx.fillRect(0, py(DUNE_TOE), CW, (DUNE_TOE - 40) * sy);   // bare sand where the dune was cut away
   ctx.beginPath(); ctx.moveTo(0, py(40));
   for (let i = 0; i < N; i++) { ctx.lineTo(px(i * DX), py(DUNE_TOE - S.dune[i])); ctx.lineTo(px((i + 1) * DX), py(DUNE_TOE - S.dune[i])); }
   ctx.lineTo(CW, py(40)); ctx.closePath(); ctx.fillStyle = '#9fb477'; ctx.fill();
@@ -419,13 +429,13 @@ function draw(time) {
   ctx.strokeStyle = '#8a6a44'; ctx.lineWidth = Math.max(1.5, 2.4 * sc); ctx.beginPath(); let pd = false;
   for (let i = 0; i < N; i++) { if (S.dune[i] > 0.6) { const Y = py(DUNE_TOE - S.dune[i]); if (!pd) ctx.moveTo(px(i * DX), Y); else ctx.lineTo(px(i * DX), Y); ctx.lineTo(px((i + 1) * DX), Y); pd = true; } else pd = false; }
   ctx.stroke();
-  ctx.fillStyle = '#d8d2c3'; ctx.fillRect(0, py(40), CW, 26 * sc);
-  ctx.fillStyle = '#6f757b'; ctx.fillRect(0, py(12), CW, 12 * sc);
+  ctx.fillStyle = '#d8d2c3'; ctx.fillRect(0, py(40), CW, 26 * sy);
+  ctx.fillStyle = '#6f757b'; ctx.fillRect(0, py(12), CW, 12 * sy);
   ctx.strokeStyle = 'rgba(255, 230, 140, 0.8)'; ctx.setLineDash([8, 8]); ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(0, py(6)); ctx.lineTo(CW, py(6)); ctx.stroke(); ctx.setLineDash([]);
   for (const h of S.houses) {
     if (!houseVisible(h)) continue;
-    const st = houseStatus(h), wpx = Math.max(10, 28 * sc), hpx = Math.max(8, 20 * sc), cx = px(h.x), cy = py(28);
+    const st = houseStatus(h), hk = Math.min(sc, sy * 1.25), wpx = Math.max(10, 28 * hk), hpx = Math.max(8, 20 * hk), cx = px(h.x), cy = py(28);
     const fl = S.t - (h.flood ?? -9);
     if (fl >= 0 && fl < 0.6 && st !== 'gone') ell(cx, cy + hpx * 0.25, wpx * 0.95, hpx * 0.55, 0, `rgba(70, 140, 190, ${(0.55 * (1 - fl / 0.6)).toFixed(3)})`); // flood water around the house
     ctx.save(); ctx.translate(cx, cy);
@@ -507,7 +517,7 @@ function drawHeadland(s) {
   ctx.closePath(); ctx.fillStyle = '#6f675e'; ctx.fill(); ctx.strokeStyle = '#3f3a35'; ctx.lineWidth = 1.2; ctx.stroke();
   for (let k = 0; k < 18; k++) { ctx.fillStyle = k % 2 ? '#8c847a' : '#58514a'; ctx.beginPath(); ctx.arc(px(x0 + (r() - 0.5) * hw * 1.2), py(r() * top), Math.max(1.2, 3.2 * sc), 0, 7); ctx.fill(); }
   const land = Math.min(top - 25, shoreAt(x0) - 12);
-  if (land > 20) { ctx.fillStyle = '#5f7f45'; ctx.beginPath(); ctx.ellipse(px(x0), py(land / 2), hw * 0.75 * sc, land / 2 * sc, 0, 0, 7); ctx.fill();
+  if (land > 20) { ctx.fillStyle = '#5f7f45'; ctx.beginPath(); ctx.ellipse(px(x0), py(land / 2), hw * 0.75 * sc, land / 2 * sy, 0, 0, 7); ctx.fill();
     for (let k = 0; k < 6; k++) ell(px(x0 + (r() - 0.5) * hw), py(r() * land * 0.9 + 6), Math.max(2, 5 * sc), Math.max(2, 5 * sc), 0, '#3f6b33'); }
   ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 1.4; ctx.beginPath();   // foam around the tip
   ctx.arc(px(x0), py(top - 4), Math.max(4, hw * 0.5 * sc), Math.PI * 1.1, Math.PI * 1.9); ctx.stroke();
@@ -570,7 +580,7 @@ function grassMask() {
 }
 function drawGrass(time) {
   for (const s of S.structures) if (s.type === 'grass') {
-    ctx.fillStyle = 'rgba(110, 160, 70, 0.35)'; ctx.fillRect(px(s.x1), py(DUNE_TOE + 16), px(s.x2 - s.x1), 20 * sc);
+    ctx.fillStyle = 'rgba(110, 160, 70, 0.35)'; ctx.fillRect(px(s.x1), py(DUNE_TOE + 16), px(s.x2 - s.x1), 20 * sy);
     const rr = seeded(s.id * 13 + 5), n = Math.round((s.x2 - s.x1) / 3.5);
     ctx.lineWidth = Math.max(1, 1.1 * sc); ctx.lineCap = 'round';
     for (let i = 0; i < n; i++) {
@@ -588,7 +598,7 @@ function riverCells(s) {
 function drawRiver(s, time) {
   const sy = shoreAt(s.x), hw = s.w / 2, bank = riverBank(s);
   // salt marsh banks where the houses and dune would be
-  ctx.fillStyle = '#8eab6b'; ctx.fillRect(px(s.x - bank), py(DUNE_TOE), px(2 * bank), (DUNE_TOE - 12) * sc); // from the road up to the dune line
+  ctx.fillStyle = '#8eab6b'; ctx.fillRect(px(s.x - bank), py(DUNE_TOE), px(2 * bank), (DUNE_TOE - 12) * sy); // from the road up to the dune line
   const rr = seeded(Math.round(s.x) + 3); ctx.strokeStyle = 'rgba(60, 90, 45, 0.6)'; ctx.lineWidth = 1;
   for (let i = 0; i < 40 + s.w / 2; i++) { const X = s.x - bank + rr() * 2 * bank, Y = 14 + rr() * (DUNE_TOE - 14); ctx.beginPath(); ctx.moveTo(px(X), py(Y)); ctx.lineTo(px(X - 1), py(Y + 5)); ctx.moveTo(px(X), py(Y)); ctx.lineTo(px(X + 2), py(Y + 5)); ctx.stroke(); }
   // the channel: a straight rectangle from the back of the map to the shoreline
@@ -600,7 +610,7 @@ function drawRiver(s, time) {
   // bridge carrying the road over the river
   // the road continues straight across: pavement over the whole marsh, railings over the water
   const rx1 = px(s.x - bank), rx2 = px(s.x + bank), bx1 = px(s.x - hw - 8), bx2 = px(s.x + hw + 8);
-  ctx.fillStyle = '#6f757b'; ctx.fillRect(rx1, py(12), rx2 - rx1, 12 * sc);
+  ctx.fillStyle = '#6f757b'; ctx.fillRect(rx1, py(12), rx2 - rx1, 12 * sy);
   ctx.fillStyle = '#c9c4b8'; ctx.fillRect(bx1, py(12.8), bx2 - bx1, Math.max(1.5, 1.2 * sc)); ctx.fillRect(bx1, py(0.4) - Math.max(1.5, 1.2 * sc), bx2 - bx1, Math.max(1.5, 1.2 * sc));
   ctx.strokeStyle = 'rgba(255, 230, 140, 0.8)'; ctx.setLineDash([8, 8]); ctx.lineWidth = 1;
   ctx.lineDashOffset = rx1; // keep the centre-line dashes in step with the rest of the road
@@ -611,7 +621,7 @@ function drawDraft() {
   if (d.type === 'headland') drawHeadland(d);
   else if (isStem(d)) { drawRocks(d.x, STEM_ROOT, d.x, d.tip, d.type === 'jetty' ? 18 : 10, 1); if (d.type === 'tgroin') drawRocks(d.x - d.head, d.tip, d.x + d.head, d.tip, 11, 2); }
   else if (d.type === 'breakwater') drawRocks(d.x1, d.y, d.x2, d.y, 14, 3);
-  else if (d.type === 'grass') { ctx.fillStyle = 'rgba(79,138,58,0.45)'; ctx.fillRect(px(d.x1), py(DUNE_TOE + 16), px(d.x2 - d.x1), 20 * sc); }
+  else if (d.type === 'grass') { ctx.fillStyle = 'rgba(79,138,58,0.45)'; ctx.fillRect(px(d.x1), py(DUNE_TOE + 16), px(d.x2 - d.x1), 20 * sy); }
   else if (d.type === 'seawall') { ctx.strokeStyle = '#b3b8bc'; ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(px(d.x1), py(d.y)); ctx.lineTo(px(d.x2), py(d.y)); ctx.stroke(); }
   ctx.globalAlpha = 1;
 }
@@ -701,7 +711,7 @@ function drawNests() {
       ctx.beginPath(); ctx.moveTo(cx - 6, cy - 5); ctx.lineTo(cx + 6, cy + 5); ctx.moveTo(cx + 6, cy - 5); ctx.lineTo(cx - 6, cy + 5); ctx.stroke();
       continue;
     }
-    const r = clamp(sc * 9, 5, 12), k = clamp(sc * 2.1, 1.1, 2);
+    const nk = Math.min(sc, sy * 1.3), r = clamp(nk * 9, 4, 12), k = clamp(nk * 2.1, 1, 2);
     for (let i = 0; i < n.pairs; i++) {
       const nx = x1 + (x2 - x1) * (i + 1) / (n.pairs + 1) - r * 0.6;
       if (season && !n.washed) { drawScrape(nx, cy, r, 4, false); drawPlover(nx + r * 2.3, cy - r * 0.2, k); }
@@ -759,7 +769,7 @@ function rebuild(h, quiet) {
 
 function drawChart() {
   // same horizontal scale as the beach: cell i sits right under the same stretch of beach
-  const w = ch.clientWidth, h = 120; cctx.clearRect(0, 0, w, h);
+  const w = ch.clientWidth, h = 96; cctx.clearRect(0, 0, w, h);
   const cs = getComputedStyle(document.documentElement);
   const cOr = cs.getPropertyValue('--orange').trim(), cGr = cs.getPropertyValue('--green').trim(), cMu = cs.getPropertyValue('--muted').trim(), cLn = cs.getPropertyValue('--line').trim(), cBg = cs.getPropertyValue('--panel').trim();
   let mx = 10; for (let i = 0; i < N; i++) mx = Math.max(mx, Math.abs(y[i] - Y0));
@@ -1479,6 +1489,7 @@ S.nests = PLACES.generic.nests.map(([x, pairs]) => ({ x, pairs, washed: false })
 setTool('inspect'); setMode('cycle'); setSpeed(SP_MIN); setPlaying(false);
 chips.querySelector('[data-place="generic"]').setAttribute('aria-pressed', 'true'); $('placeBlurb').innerHTML = '<b>Generic beach.</b> ' + PLACES.generic.blurb + ' Pick a Maine beach to load its structures and wave settings.';
 resize(); window.addEventListener('resize', () => { resize(); });
+if (window.ResizeObserver) { let lastH = ''; const ro = new ResizeObserver(() => { const k = ['.toprow', '.chartbox', 'header.top'].map(q => document.querySelector(q)?.offsetHeight).join(); if (k !== lastH) { lastH = k; resize(); } }); ['.toprow', '.chartbox', 'header.top'].forEach(q => { const e = document.querySelector(q); if (e) ro.observe(e); }); }
 resetBeach();
 refreshTerms(); updateReadouts(); drawChart();
 if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) { /* waves still animate slowly; user can pause */ }
