@@ -1,6 +1,6 @@
 # Shoreline Sandbox 🏖️
 
-An interactive, playful shoreline-change simulator for the general public. Place groins, T-groins (spurs), jetties, offshore breakwaters, seawalls, rivers and beach nourishment on a straight 1.5 km beach. Choose the wave direction, height, period and season, send a nor'easter or a tropical storm, time it with the tide, raise the sea level, and watch the shoreline and dunes evolve. A live panel shows the governing equation, and new terms appear as you add each structure or process.
+An interactive, playful shoreline-change simulator for the general public. Place groins, T-groins, spurs, jetties, headlands, islands, offshore breakwaters, dune grass, seawalls, rivers and beach nourishment on a straight 1.5 km beach. Choose the wave direction, height, period and season, send a nor'easter or a tropical storm, time it with the tide, raise the sea level, and watch the shoreline and dunes evolve. A live panel shows the governing equation, and new terms appear as you add each structure or process.
 
 The beach is generic, oriented like Saco Bay, Maine (it faces east, with north on the left). A Saco Bay version is planned.
 
@@ -13,7 +13,7 @@ You can also download this repository and open `index.html` in any modern browse
 ## How to use it
 
 1. **Pick a place.** Start from the generic beach, or load a Maine beach from the Maine beaches box at the top right (Camp Ellis, Camp Ellis with the new spur jetty, Old Orchard Beach, Pine Point, Wells Beach, Kennebunk Beach, Ogunquit Beach, Popham Beach). Each one loads that beach's main structures, which way it faces, and its wave and sand settings.
-2. **Build.** Pick a tool from the Build box above the beach (Groin, T-groin / spur, Jetty, Breakwater, Headland, Dune grass, Seawall, Add sand, River, Nesting area, Rebuild house) and click the water or the beach. Drag to set a groin's length or a breakwater's or seawall's extent. Use **Remove** or **Undo last** to take things away. Set the size of sand fills, and the width and sand supply of rivers, with the sliders under the tools (the river sliders also change the river you placed last). Houses that wash away leave empty lots; rebuild them with **Rebuild house** or **Rebuild all houses** once there is at least 20 m of beach again.
+2. **Build.** Pick a tool from the Build box above the beach (Groin, T-groin, Spur, Jetty, Island, Breakwater, Headland, Dune grass, Seawall, Add sand, River, Nesting area, Rebuild house) and click the water or the beach. A **Spur** is a groin with an arm off one side only: drag left or right to choose the side and length of the arm. Drag to set a groin's length or a breakwater's or seawall's extent. Use **Remove** or **Undo last** to take things away. **Add sand** on the beach for a beach fill, or in the water to dump sand offshore and watch the waves push it toward shore (sand dumped deeper than the closure depth never moves). **Island** places a small island (drag sideways to make it bigger). Set the size of sand fills, and the width and sand supply of rivers, with the sliders under the tools (the river sliders also change the river you placed last). Plant **Dune grass** by dragging out a rectangle of whatever length and width you like (a click plants a 120 m strip); it thickens and spreads over the years. Houses that wash away leave empty lots; rebuild them with **Rebuild house** or **Rebuild all houses** once there is at least 20 m of beach again.
 3. **Set the waves.** Choose *Year-round* (waves change month by month) or hold one season, or drag the direction dial and the height and period sliders for custom waves.
 The page sizes the beach view to your screen so the controls, the beach and the shoreline chart fit together; on shorter screens the view is squeezed top-to-bottom (distances across the beach are drawn shorter than distances along it).
 
@@ -36,33 +36,47 @@ Not sure where to start? Try the four ready-made experiments: a groin field, a r
 
 ## The model
 
-The shoreline position is split into a long-term alongshore part and a fast cross-shore (storm/season) part, $y = y_s + y_c$, solved with explicit finite differences on 150 cells of 10 m with an adaptive, stability-limited time step.
+The beach is described by two lines (Bakker 1968; Hanson & Larson 2000): the shoreline $y_1$ and an offshore depth contour $y_2$ at depth $h_1 = \min(2.5\,\mathrm{m},\,0.4h_*)$. Both are solved with explicit finite differences on 150 cells of 10 m with an adaptive, stability-limited time step.
 
-**Sand budget (one-line model; Pelnard-Considère 1956)**
+**Sand budget (two-line model)**
 
-$$\frac{\partial y_s}{\partial t} = -\frac{1}{D}\frac{\partial Q}{\partial x} + \frac{q(x,t)}{D} - \frac{W_*}{D}\frac{d\eta}{dt}, \qquad D = h_* + B$$
+$$\frac{\partial y_1}{\partial t} = -\frac{1}{D_1}\frac{\partial Q_1}{\partial x} + \frac{q_y}{D_1} + \frac{q(x,t)}{D_1} - \frac{W_*}{D}\frac{d\eta}{dt}, \qquad \frac{\partial y_2}{\partial t} = -\frac{1}{D_2}\frac{\partial Q_2}{\partial x} - \frac{q_y}{D_2} - \frac{W_*}{D}\frac{d\eta}{dt}$$
 
-**Longshore transport (GENESIS form; Hanson 1989, Ozasa & Brampton 1980)**
+with $D_1 = B + h_1$, $D_2 = h_* - h_1$ and $D = h_* + B$. Rivers, nourishment and eroded dune sand ($q$) go to line 1.
 
-$$Q = \left(H_b^2 C_g\right)_b\left[a_1 \sin 2(\theta_b-\phi) - a_2\cos(\theta_b-\phi)\frac{\partial H_b}{\partial x}\right], \qquad \phi = \arctan\frac{\partial y}{\partial x}$$
+**Longshore transport (GENESIS form; Hanson 1989, Ozasa & Brampton 1980), shared between the lines**
 
-with $a_1 = K_1/[16(s-1)(1-p)1.416^{5/2}]$ and $a_2 = K_2/[8(s-1)(1-p)\tan\beta\,1.416^{7/2}]$, $K_2 = 0.8K_1$, $\tan\beta = 0.03$. The $\partial H_b/\partial x$ term is limited to $\pm a_1$ for numerical robustness.
+$$Q_i = f_i\left(H_b^2 C_g\right)_b\left[a_1 \sin 2(\theta_b-\phi_i) - a_2\cos(\theta_b-\phi_i)\frac{\partial H_b}{\partial x}\right], \qquad f_1 = \min\!\left(1, \frac{y_2 - y_1}{y_B}\right),\ f_2 = 1 - f_1$$
 
-**Breaking waves (Komar & Gaughan 1972) and refraction (Snell's law)**
+where $\phi_i = \arctan(\partial y_i/\partial x)$, $a_1 = K_1/[16(s-1)(1-p)1.416^{5/2}]$ and $a_2 = K_2/[8(s-1)(1-p)\tan\beta\,1.416^{7/2}]$, $K_2 = 0.8K_1$, $\tan\beta = 0.03$. The $\partial H_b/\partial x$ term is limited to $\pm a_1$ for numerical robustness.
 
-$$H_b = 0.39\,g^{1/5}\left(T H_0^2\right)^{2/5}, \qquad \frac{\sin\theta_b}{C_b} = \frac{\sin\theta_0}{C_0}$$
+**Cross-shore exchange between the lines (storms and seasons)**
 
-**Groins and jetties (bypassing boundary condition)**
+$$q_y = K\,(y_2 - y_1 - W_{eq}), \qquad W_{eq} = W_0 + W'\,\frac{0.068H_b + S + \eta_T}{B + 1.28H_b}$$
 
-$$Q(x_g) = \mathrm{BYP}\,Q, \qquad \mathrm{BYP} = 1 - \frac{y_G}{y_B}, \qquad y_B = \left(\frac{h_b}{A}\right)^{3/2}$$
+$W_0 = (h_1/A)^{3/2}$ is the calm Dean-profile distance, and $W' = 250\,(D_1 + D_2)/D_2$ m, so the shoreline's storm response matches Miller & Dean (2004). The distance relaxes at $150\ \mathrm{yr^{-1}}$ when storms pull sand offshore and $8\ \mathrm{yr^{-1}}$ when it returns; sand volume is conserved.
 
-where $A = 0.21\,d_{50}^{0.48}$ is the Dean profile parameter. Groins also shelter their lee side from oblique waves (Bakker 1968; Bakker et al. 1970).
+**Waves: breaking, refraction and diffraction**
 
-**Breakwaters:** $H_b \to K_d H_b$ in the geometric shadow, with smooth diffraction edges; a shoreline that reaches the breakwater forms a tombolo.
+$$H_b = 0.39\,g^{1/5}\left(T H_0^2\right)^{2/5} \ \text{(Komar \& Gaughan 1972)}, \qquad \left|\nabla\psi\right| = k(x,y),\quad \omega^2 = gk\tanh kh$$
+
+The wave phase $\psi$ is solved on a 5 m grid by fast sweeping (Zhao 2005), with $k$ from the Fenton & McKee (1990) approximation of the dispersion relation. The depth comes from the two lines: a Dean profile scaled to reach $h_1$ at line 2, then $h = A\,(d - w + W_0)^{2/3}$ beyond it, using lines smoothed over about 20 m. Waves enter at the offshore edge and the upwave side with the straight-contour (Snell) solution; land and structures are solid, so crests bend toward the shore (refraction) and wrap around structure ends (diffraction, in the ray/eikonal sense). Crests are drawn as the contours $\psi = 2\pi n + \omega t$. The breaking angle $\theta_b$ used in the transport is the direction of $\nabla\psi$ at the breaker line of each cell (smoothed, and kept within ±46° of the Snell value). Wave heights in shadows use the sheltering factor $K_d$ below.
+
+**Groins and jetties (bypassing, per line)**
+
+$$Q_i(x_g) = \mathrm{BYP}_i\,Q_i, \qquad \mathrm{BYP}_1 = 1 - \frac{\min(y_G, w)}{w}, \qquad \mathrm{BYP}_2 = 1 - \frac{(y_G - w)_+}{y_B - w}, \qquad y_B = \left(\frac{h_b}{A}\right)^{3/2}$$
+
+where $y_G$ is how far the groin extends past the shoreline, $w = \min(y_2 - y_1, y_B)$, and $A = 0.21\,d_{50}^{0.48}$ is the Dean profile parameter. A short groin blocks only line 1; a long one blocks both. Groins also shelter their lee side from oblique waves (Bakker 1968; Bakker et al. 1970).
+
+**T-groins and spurs:** the shore-parallel head (both sides for a T-groin, one side for a spur) shelters the beach like a short breakwater and blocks the wave field.
+
+**Breakwaters and islands:** $H_b \to K_d H_b$ in the geometric shadow, with smooth diffraction edges, and both are solid obstacles in the wave field; a shoreline that reaches one forms a tombolo. Islands are ellipses; the Popham Beach preset uses one for Fox Island.
+
+**Offshore (nearshore) nourishment:** sand dumped in the water forms a Gaussian mound (130 m × 55 m spread, thickness capped at 75% of the depth) that makes the water shallower, so waves refract over it. Waves push it shoreward at $u \approx 150\,H_b\,(1 - h/h_*)$ m/yr (storms push it back out a little) and drift carries it alongshore; once it reaches line 2 it merges into the nearshore profile at 3 per year, and the cross-shore exchange then carries it up onto the beach. A mound below the closure depth ($h \ge h_*$) never moves. Sand dumped inside line 2 joins it immediately.
 
 **Rivers:** a river delivers its sand supply $Q_r$ (set with the slider) to the beach on both sides of its mouth, and keeps its mouth open (the shoreline across the channel can build out at most 20 m). A river mouth held between jetties sends its sand out past the jetties instead, so it never reaches the beach.
 
-**Dune grass:** on planted stretches the cross-shore rates become $k_v = (1-\beta)k$ during storm erosion and $(1+\gamma)k$ during recovery, with illustrative $\beta = 0.4$ and $\gamma = 0.3$. Grass has no effect on longshore drift and stops working where the shoreline reaches the dune.
+**Dune grass:** on planted stretches the cross-shore rates become $K_v = (1-\beta)K$ during storm erosion and $(1+\gamma)K$ during recovery, with illustrative $\beta = 0.4$ and $\gamma = 0.3$; dune erosion is ×0.6 and dune regrowth ×1.5. Grass is planted as a rectangle you drag out. New plantings are sparse and fill in over a few years (cover $= 0.3 + 0.7(1 - e^{-t/2\,\mathrm{yr}})$). The patch spreads 2 m/yr along the beach (until it meets a structure, river or seawall) and up the dune, and 1.5 m/yr toward the water while it stays about 30 m back from the shoreline (up to 25 m past the dune toe); storms kill its front if the sea comes closer. Under the grass, trapped sand builds a new foredune at 1.5 m/yr where the dry beach is wider than 35 m. Grassed sand is not plover habitat. Grass has no effect on longshore drift and stops working where the shoreline reaches the dune.
 
 **Headlands and wave focusing:** a rocky headland blocks all drift ($\mathrm{BYP} = 0$) and leaves a strong wave shadow in its lee. Waves reflected off headlands and long jetties raise the waves on the beach just updrift: $H_b \to K H_b$ with $K = (1 - 0.8 S_h)(1 + 0.25e^{-d/70\,\mathrm{m}})$ within 220 m.
 
@@ -74,25 +88,21 @@ $$\frac{dx_d}{dt} = \frac{4C_s\,(TWL - z_t)_+^2}{T\,(z_c - z_t)}$$
 
 with $C_s = 9.3\times10^{-4}$, $z_c - z_t = 4.8$ m (fit to Camp Ellis). The toe height rises with dry-beach width, $z_t = \beta_f\,w$ (1.5–6 m), so wide beaches shield their dunes. Eroded dune sand feeds the beach; between storms, wind rebuilds the dune at 0.41 m/yr where the beach is wider than 20 m. When the 28 m dune is gone and $TWL$ is more than 0.8 m above the toe, waves wash over onto the road; a house within 30 m is counted as flooded (once per storm). Dune grass slows dune erosion ×0.6 and speeds regrowth ×1.5.
 
-**Seawalls:** $y(x,t) \ge y_w$, enforced by limiting outgoing transport (so the beach in front can disappear).
+**Numerical safeguards:** line models are only valid for gently curving shorelines. When the angle between the breaking waves and the shoreline exceeds 45° the transport equation becomes anti-diffusive, which cut narrow canyons and spikes into tombolos. The relative angle in $Q_i$ is therefore capped at ±45°, sand that would push a line past a breakwater or island is shifted to the neighbouring cells (volume conserved), and a plan-shape limiter lets any stretch steeper than 35° from the trend slump sideways (volume conserved; not across groins, jetties, headlands or river mouths).
 
-**Storms and seasons (Miller & Dean 2004)**
+**Seawalls:** $y_1 \ge y_w$, enforced by limiting outgoing transport on line 1 (so the beach in front can disappear).
 
-$$\frac{\partial y_c}{\partial t} = k\,(y_{eq} - y_c), \qquad y_{eq} = -W\,\frac{0.068H_b + S}{B + 1.28H_b}$$
-
-with $k = 150\ \mathrm{yr^{-1}}$ for erosion and $8\ \mathrm{yr^{-1}}$ for recovery, $W = 250$ m, and surge $S$ during storms.
-
-**Sea-level rise (Bruun 1962):** retreat rate $= \dfrac{W_*}{h_*+B}\dfrac{d\eta}{dt}$, $W_* = (h_*/A)^{3/2}$.
+**Sea-level rise (Bruun 1962):** both lines retreat at $= \dfrac{W_*}{h_*+B}\dfrac{d\eta}{dt}$, $W_* = (h_*/A)^{3/2}$.
 
 **Wave climate:** illustrative monthly offshore values for the Gulf of Maine (winter swell from the E–ENE, calmer summer swell from the SSE), informed by the UNE Camp Ellis wave buoy and NOAA NDBC buoy 44007. Storms: nor'easter $H_0$ = 4.5 m, $T$ = 11 s, from ENE, surge 0.9 m, 3 days; tropical storm $H_0$ = 4 m, $T$ = 13 s, from SSE, surge 0.6 m, 2 days.
 
 **Maine beach presets:** each place is a simplified 1.5 km stretch with its main structures at approximate sizes and positions. The monthly climate is rotated to the direction the beach faces, turned clockwise by a site-specific angle to stand in for bending by headlands and bays, and scaled by an exposure factor (e.g. 0.55 for sheltered Camp Ellis). These are teaching estimates, not calibrated values.
 
-**Shorebird nesting:** piping plovers and least terns (endangered in Maine) nest on dry sand in front of the dunes from May 1 to August 31. A nesting area is safe with at least 20 m of dry beach in front of the dune, at risk below 20 m and lost below 8 m. A storm during the season washes out nests where the beach is narrower than 25 m + 30 × surge. Each season, safe areas fledge 1.44 chicks per pair (the 2025 Maine rate), and at-risk areas half that.
+**Shorebird nesting:** piping plovers and least terns (endangered in Maine) nest on dry sand in front of the dunes from May 1 to August 31. A nesting area is safe with at least 20 m of dry beach in front of the dune, at risk below 20 m and lost below 8 m. A storm during the season washes out nests where the beach is narrower than 25 m + 30 × surge. Each season, safe areas fledge 1.44 chicks per pair (the 2025 Maine rate), and at-risk areas half that. Each spring a successful area may gain a pair (20% chance, up to 4 pairs), a failed one may lose one, and if any chicks fledged, a new pair may settle on a wide, open stretch (illustrative odds, up to 8 areas).
 
 ## Limitations
 
-This is a teaching tool, not a forecast. Waves are uniform alongshore apart from structure effects, forcing uses monthly averages (so drift rates are high), dunes and overwash are simplified to one value per 10 m, and inlets, rip currents and seawall reflection are not modelled.
+This is a teaching tool, not a forecast. The wave field is geometric (ray) optics over an idealized sea bed, with a simpler sheltering factor for wave heights in shadows; forcing uses monthly averages (so drift rates are high), dunes and overwash are simplified to one value per 10 m, and inlets, rip currents and seawall reflection are not modelled.
 
 ## References
 
@@ -105,10 +115,13 @@ This is a teaching tool, not a forecast. Waves are uniform alongshore apart from
 - Le Méhauté, B. & Soldate, M. (1977). *Mathematical Modeling of Shoreline Evolution*. CERC Misc. Report 77-10.
 - Miller, J.K. & Dean, R.G. (2004). A simple new shoreline change model. *Coastal Engineering* 51.
 - Larson, M., Erikson, L. & Hanson, H. (2004). An analytical model to predict dune erosion due to wave impact. *Coastal Engineering* 51.
+- Fenton, J.D. & McKee, W.D. (1990). On calculating the lengths of water waves. *Coastal Engineering* 14.
+- Hanson, H. & Larson, M. (2000). Simulating coastal evolution using a new type of N-line model. *Proc. 27th Coastal Engineering Conf.*
 - Ozasa, H. & Brampton, A.H. (1980). Mathematical modelling of beaches backed by seawalls. *Coastal Engineering* 4.
 - Pelnard-Considère, R. (1956). Essai de théorie de l'évolution des formes de rivage en plages de sable et de galets. *4èmes Journées de l'Hydraulique*.
 - Stockdon, H.F., Holman, R.A., Howd, P.A. & Sallenger, A.H. (2006). Empirical parameterization of setup, swash, and runup. *Coastal Engineering* 53.
 - U.S. Army Corps of Engineers (1984). *Shore Protection Manual*; (2002) *Coastal Engineering Manual*, EM 1110-2-1100.
+- Zhao, H. (2005). A fast sweeping method for eikonal equations. *Mathematics of Computation* 74.
 - NOAA NDBC station 44007: https://www.ndbc.noaa.gov/station_page.php?station=44007
 - NOAA sea level trends, Portland ME 8418150: https://tidesandcurrents.noaa.gov/sltrends/sltrends_station.shtml?id=8418150
 - UNE Camp Ellis wave buoy: https://ekelting.github.io/UNE-Camp-Ellis-SPOT-32787C/

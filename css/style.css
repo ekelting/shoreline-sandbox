@@ -236,6 +236,13 @@ details.adv[open] summary { margin-bottom: 8px; }
 .mgroup-h { font-size: 17px; font-weight: 600; margin-top: 4px; }
 .mgroup-h span { font-family: var(--body); font-size: 13px; font-weight: 400; color: var(--muted); margin-left: 6px; }
 .math-head h2 { font-size: 22px; font-weight: 800; }
+.math-title { display: flex; align-items: center; justify-content: flex-start; gap: 12px; flex-wrap: wrap; }
+.math-toggle { font-size: 13px; padding: 5px 12px; font-weight: 700; }
+.math-toggle .chev { display: inline-block; transition: transform .2s; }
+.math-toggle[aria-expanded="false"] .chev { transform: rotate(-90deg); }
+.math-body { display: grid; gap: 14px; }
+.math-body[hidden] { display: none; }
+.mathsec.collapsed .math-head p { display: none; }
 .math-head p { margin: 4px 0 0; font-size: 14px; color: var(--muted); max-width: 90ch; }
 .master { overflow-x: auto; font-size: 17px; min-height: 150px; display: flex; align-items: center; justify-content: center; border-radius: 8px; }
 .master.flash { animation: flash 1.2s ease-out; }

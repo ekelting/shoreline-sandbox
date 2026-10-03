@@ -19,21 +19,28 @@ const STORMS = {
   noreaster: { name: "Nor'easter", H0: 4.5, T: 11, th: 24, surge: 0.9, days: 3 },
   tropical:  { name: 'Tropical storm', H0: 4.0, T: 13, th: -28, surge: 0.6, days: 2 }
 };
-const COL = { groin: '#d95926', jetty: '#d95926', tgroin: '#d95926', headland: '#6b625a', breakwater: '#8a55c9', seawall: '#7a8790', grass: '#4f8a3a', river: '#1fa37a', fill: '#1fa37a', storm: '#c98500', slr: '#1690a0', drift: '#2f78d6' };
+const COL = { groin: '#d95926', jetty: '#d95926', tgroin: '#d95926', spur: '#d95926', headland: '#6b625a', breakwater: '#8a55c9', island: '#6d8f4e', seawall: '#7a8790', grass: '#4f8a3a', river: '#1fa37a', fill: '#1fa37a', storm: '#c98500', slr: '#1690a0', drift: '#2f78d6' };
 const START_MONTH = 8; // September
 
 // ---------- state ----------
 const S = {
-  t: 0, yls: new Float64Array(N), ycs: new Float64Array(N), structures: [], fills: [], sandAdded: 0,
+  t: 0, yls: new Float64Array(N), y2: new Float64Array(N), structures: [], fills: [], sandAdded: 0,
   storm: null, storms: 0, mode: 'cycle', H0: 1, T: 8.5, th: 0, slr: 2, eta: 0, speed: 1 / 30, playing: false,
-  K1: 0.2, d50: 0.3, hstar: 8, normal: 90, turn: 0, expo: 1, place: 'generic', tideAmp: 1.3, timing: 'random', dune: new Float64Array(N), over: new Float64Array(N), floods: 0, twl: 0, rq: 42000, houses: HOUSES.map(x => ({ x, gone: false })), riverW: 60, critters: [], nests: [], fledged: 0, lastMonth: -1, vol: 200000, tool: 'inspect', nextId: 1, placed: false, lastSurge: 0
+  K1: 0.2, d50: 0.3, hstar: 8, normal: 90, turn: 0, expo: 1, place: 'generic', tideAmp: 1.3, timing: 'random', dune: new Float64Array(N), over: new Float64Array(N), floods: 0, twl: 0, rq: 42000, mounds: [], houses: HOUSES.map(x => ({ x, gone: false })), riverW: 60, critters: [], nests: [], fledged: 0, lastMonth: -1, vol: 200000, tool: 'inspect', nextId: 1, placed: false, lastSurge: 0
 };
-const y = new Float64Array(N), Hc = new Float64Array(N), Kd = new Float64Array(N), Q = new Float64Array(N + 1);
+const y = new Float64Array(N), Hc = new Float64Array(N), Kd = new Float64Array(N), Q = new Float64Array(N + 1), Q2 = new Float64Array(N + 1), FR = new Float64Array(N + 1), YB = new Float64Array(N + 1);
 let W = null; // current waves (breaking info)
 
 const Aprof = () => 0.21 * Math.pow(S.d50, 0.48);
 const Dact = () => S.hstar + BERM;
 const Wstar = () => Math.pow(S.hstar / Aprof(), 1.5);
+// two-line model (Bakker 1968): line 1 is the shoreline, line 2 an offshore depth contour at depth h1
+const H1 = () => Math.min(2.5, 0.4 * S.hstar);
+const D1f = () => BERM + H1(), D2f = () => S.hstar - H1();
+const Weq0 = () => Math.pow(H1() / Aprof(), 1.5);                  // calm distance from the shoreline to line 2 (Dean profile)
+// equilibrium distance between the lines: storms (big waves, surge, tide) flatten the profile and push sand offshore.
+// The storm term is scaled so the shoreline retreats as much as in Miller & Dean (2004).
+const weqAt = (Hl, Stot) => Weq0() + W_CS * (0.068 * Hl + Stot) / (BERM + 1.28 * Hl) * (D1f() + D2f()) / D2f();
 const a1f = () => S.K1 / (16 * SM1 * (1 - POR) * Math.pow(1.416, 2.5));
 const a2f = () => 0.8 * S.K1 / (8 * SM1 * (1 - POR) * TANB * Math.pow(1.416, 3.5));
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -98,12 +105,15 @@ function breaking(H0, T, thDeg) {
 }
 
 // ---------- structures ----------
-const isStem = s => s.type === 'groin' || s.type === 'jetty' || s.type === 'tgroin' || s.type === 'headland';
+const isStem = s => s.type === 'groin' || s.type === 'jetty' || s.type === 'tgroin' || s.type === 'spur' || s.type === 'headland';
+// the shore-parallel head of a T-groin (both sides) or a spur (one side only): [left end, right end], or null
+const headSpan = s => s.type === 'tgroin' ? [s.x - s.head, s.x + s.head] : s.type === 'spur' ? (s.side < 0 ? [s.x - s.head, s.x] : [s.x, s.x + s.head]) : null;
 function heads() {
   const out = [];
   for (const s of S.structures) {
     if (s.type === 'breakwater') out.push({ xa: s.x1, xb: s.x2, y: s.y });
-    if (s.type === 'tgroin') out.push({ xa: s.x - s.head, xb: s.x + s.head, y: s.tip });
+    if (s.type === 'island') out.push({ xa: s.x - s.rx * 0.85, xb: s.x + s.rx * 0.85, y: s.y });
+    const hsp = headSpan(s); if (hsp) out.push({ xa: hsp[0], xb: hsp[1], y: s.tip });
   }
   return out;
 }
@@ -137,42 +147,120 @@ function shelterAt(X, Y, w, hs) {
 }
 
 // ---------- physics ----------
-function totals() { for (let i = 0; i < N; i++) y[i] = S.yls[i] + S.ycs[i]; }
+function totals() { for (let i = 0; i < N; i++) y[i] = S.yls[i]; }
 function stableDt(w) {
   const E = w.Hb * w.Hb * Math.sqrt(g * w.Hb / GAMMA);
-  const eps = 2 * E * a1f() * SEC / Dact();
+  const eps = 2 * E * a1f() * SEC / Math.min(D1f(), D2f());
   return 0.4 * DX * DX / Math.max(eps, 1);
 }
-function step(dt, w) {
-  const A = Aprof(), Dd = Dact(), a1 = a1f(), a2 = a2f(), hs = heads();
-  totals();
+// water depth at a point, from the two-line profile (without any offshore sand mounds)
+function depthAt(X, Y) {
+  const i = cellOf(X), d = Y - S.yls[i]; if (d <= 0) return 0;
+  const wid = Math.max(3, S.y2[i] - S.yls[i]);
+  return d < wid ? H1() * Math.pow(d / wid, 2 / 3) : Aprof() * Math.pow(d - wid + Weq0(), 2 / 3);
+}
+const islandFront = (s, X) => { const u = (X - s.x) / s.rx; return Math.abs(u) < 1 ? s.y - s.ry * Math.sqrt(1 - u * u) : Infinity; };
+// nearshore (offshore) nourishment: a mound of sand in the water. Waves push it toward shore, fastest in shallow water;
+// when it reaches line 2 it merges into the nearshore profile, and calm waves then carry it up onto the beach.
+// Below the closure depth waves can't move it, so it just sits there.
+const MSX = 130, MSY = 55;
+const moundThick = (m, h) => Math.min(m.V / (2 * Math.PI * MSX * MSY), 0.75 * h);
+// a breakwater or island stops the shoreline; sand that would pass it is pushed to the neighbouring cells instead of vanishing
+function capAt(i, f) {
+  const e = S.yls[i] - f; if (e <= 0) return;
+  S.yls[i] = f;
+  if (i > 0) S.yls[i - 1] += e / 2; else S.yls[i] += e / 2;
+  if (i < N - 1) S.yls[i + 1] += e / 2; else S.yls[i] += e / 2;
+}
+const SLOPE_MAX = 0.7; // tan 35°
+function limitSlope(a, skip) {
+  const m = SLOPE_MAX * DX;
+  for (let pass = 0; pass < 2; pass++) for (let j = 1; j < N; j++) {
+    if (skip[j]) continue;
+    const d = a[j] - a[j - 1];
+    if (d > m) { const e = (d - m) / 2; a[j] -= e; a[j - 1] += e; }
+    else if (d < -m) { const e = (-d - m) / 2; a[j] += e; a[j - 1] -= e; }
+  }
+}
+function stepMounds(dt, w) {
+  if (!S.mounds.length) return;
+  const D2 = D2f(), sig = 100, add = (X, V) => { for (let k = 0; k < N; k++) { const d = (k + 0.5) * DX - X; S.y2[k] += V / (D2 * sig * Math.sqrt(2 * Math.PI)) * Math.exp(-d * d / (2 * sig * sig)); } };
+  for (const m of S.mounds) {
+    const i = cellOf(m.x), h = depthAt(m.x, m.y); m.h = h;
+    if (h >= S.hstar) { m.stuck = true; continue; }
+    m.stuck = false;
+    const act = clamp(1 - h / S.hstar, 0, 1), Hb = w ? w.Hb : 1, storm = w && w.sf > 0.4;
+    const u = (storm ? -60 : 150) * act * Hb;                // m/yr toward shore (storms push it back out a little)
+    let ny = m.y - u * dt; const floor = S.y2[i] + 10;
+    if (ny < floor) ny = Math.min(m.y, floor);                // it has arrived: the bar it builds never pushes it back out to sea
+    m.y = Math.min(ny, YL - 20);
+    const q = faceQ(m.x); m.x = clamp(m.x + Math.sign(q) * Math.min(60, 25 * Math.sqrt(Math.abs(q) / 1e5)) * act * dt, 20, XL - 20);
+    if (m.y <= S.y2[i] + 30) { const dV = m.V * (1 - Math.exp(-3 * dt)); add(m.x, dV); m.V -= dV; }
+  }
+  for (const m of S.mounds) if (m.V < 3000) add(m.x, m.V);
+  S.mounds = S.mounds.filter(m => m.V >= 3000);
+}
+function nourishOffshore(X, Y) {
+  const V = S.vol, i = cellOf(X), d = Y - S.yls[i], wd = S.y2[i] - S.yls[i];
+  S.fills.push({ x: X, V, t: S.t, off: true }); S.sandAdded += V;
+  fx.push({ x: X, t0: performance.now() / 1000, label: '+' + fmtVol(V) + ' m³', y: Y });
+  if (d < wd * 0.8) {                                         // inside line 2: it becomes part of the nearshore profile straight away
+    const D2 = D2f(), sig = 120; for (let k = 0; k < N; k++) { const dd = (k + 0.5) * DX - X; S.y2[k] += V / (D2 * sig * Math.sqrt(2 * Math.PI)) * Math.exp(-dd * dd / (2 * sig * sig)); }
+    toast(`🚢 ${fmtVol(V)} m³ of sand dropped in the surf zone. It joins the nearshore bar and calm waves carry it up the beach.`);
+  } else {
+    const h = depthAt(X, Y);
+    S.mounds.push({ x: X, y: Y, V, V0: V, h });
+    toast(h >= S.hstar ? `🚢 ${fmtVol(V)} m³ dumped ${h.toFixed(1)} m deep. That is below the closure depth, so waves can't move it: it will just sit there.` : `🚢 ${fmtVol(V)} m³ dumped offshore, ${h.toFixed(1)} m deep. Watch the waves push it toward the beach.`);
+  }
+  placed(); totals(); refreshTerms(true);
+}
+// slow-changing inputs (wave sheltering, soft protection, seawalls) are refreshed every few dozen time steps
+function prep(w) {
+  const hs = heads(); totals();
   for (let i = 0; i < N; i++) Kd[i] = shelterAt((i + 0.5) * DX, y[i], w, hs);
+  const skip = new Uint8Array(N + 1);
+  for (const s of S.structures) {
+    if (isStem(s)) { skip[s.face] = 1; if (s.type === 'headland') for (let j = cellOf(s.x - 50); j <= cellOf(s.x + 50) + 1; j++) skip[clamp(j, 0, N)] = 1; }
+    if (s.type === 'river') { const c = riverCells(s); for (let j = c.i1; j <= c.i2 + 1; j++) skip[j] = 1; }
+  }
+  return { soft: softMask(), wall: wallMask(), veg: vegReach(), skip };
+}
+function step(dt, w, pre) {
+  const A = Aprof(), a1 = a1f(), a2 = a2f(), D1 = D1f(), D2 = D2f(), y2 = S.y2;
+  totals();
   for (let i = 0; i < N; i++) { // light alongshore smoothing: diffraction never makes sharper steps than this
     const a = Kd[Math.max(0, i - 1)], b = Kd[Math.min(N - 1, i + 1)];
     Hc[i] = w.Hb * (0.25 * a + 0.5 * Kd[i] + 0.25 * b);
   }
+  // longshore transport, shared between the two lines by how much of the surf zone lies inside line 2.
+  // The breaking angle comes from the wave field, so it includes refraction and diffraction.
+  const field = WF.ok;
   for (let j = 1; j < N; j++) {
-    const Hf = 0.5 * (Hc[j - 1] + Hc[j]), Cg = Math.sqrt(g * Hf / GAMMA), E = Hf * Hf * Cg;
-    const phi = Math.atan((y[j] - y[j - 1]) / DX), a = w.thb - phi, dH = (Hc[j] - Hc[j - 1]) / DX;
-    const dif = clamp(a2 * Math.cos(a) * dH, -a1, a1);
-    Q[j] = E * (a1 * Math.sin(2 * a) - dif) * SEC;
+    const Hf = 0.5 * (Hc[j - 1] + Hc[j]), Cg = Math.sqrt(g * Hf / GAMMA), E = Hf * Hf * Cg * SEC;
+    const th = field ? 0.5 * (WF.th[j - 1] + WF.th[j]) : w.thb, dH = (Hc[j] - Hc[j - 1]) / DX;
+    const yB = Math.pow(Math.max(0.05, Hf / GAMMA) / A, 1.5), wd = 0.5 * (y2[j - 1] - y[j - 1] + y2[j] - y[j]);
+    const f = clamp(wd / yB, 0, 1);
+    // the relative angle is capped at 45°: beyond it one-line theory turns anti-diffusive and cuts spikes and canyons into the shore
+    const q = phi => { const a = clamp(th - phi, -Math.PI / 4, Math.PI / 4); return E * (a1 * Math.sin(2 * a) - clamp(a2 * Math.cos(a) * dH, -a1, a1)); };
+    Q[j] = f * q(Math.atan((y[j] - y[j - 1]) / DX));
+    Q2[j] = (1 - f) * q(Math.atan((y2[j] - y2[j - 1]) / DX));
+    FR[j] = f; YB[j] = yB;
   }
-  Q[0] = Q[1]; Q[N] = Q[N - 1];
+  Q[0] = Q[1]; Q[N] = Q[N - 1]; Q2[0] = Q2[1]; Q2[N] = Q2[N - 1];
+  // groins: each line loses the part of its share of the surf zone that the groin reaches
   for (const s of S.structures) {
     if (!isStem(s)) continue;
-    const gi = s.face, ys = 0.5 * (y[gi - 1] + y[gi]), yG = s.tip - ys;
-    let byp = 1;
-    if (yG > 0) {
-      const hbf = Math.max(0.05, 0.5 * (Hc[gi - 1] + Hc[gi]) / GAMMA), yB = Math.pow(hbf / A, 1.5);
-      byp = Math.max(0, 1 - yG / yB);
-    }
-    if (s.type === 'headland') byp = 0;                          // far too big for sand to get round
-    Q[gi] *= byp; s.byp = byp;
+    const gi = s.face, y1f = 0.5 * (y[gi - 1] + y[gi]), wf = Math.max(0, 0.5 * (y2[gi - 1] + y2[gi]) - y1f), yB = YB[gi];
+    const a = Math.min(wf, yB), b = s.tip - y1f;
+    let b1 = a > 0.5 ? 1 - clamp(b, 0, a) / a : (b > 0 ? 0 : 1);
+    let b2 = yB - a > 0.5 ? 1 - clamp(b - a, 0, yB - a) / (yB - a) : 1;
+    if (s.type === 'headland') { b1 = 0; b2 = 0; }              // far too big for sand to get round
+    Q[gi] *= b1; Q2[gi] *= b2; s.byp = FR[gi] * b1 + (1 - FR[gi]) * b2;
   }
   for (const s of S.structures) {
     if (s.type !== 'seawall') continue;
     for (let i = s.i1; i <= s.i2; i++) {
-      const avail = Math.max(0, y[i] - s.y) * Dd * DX / dt;
+      const avail = Math.max(0, y[i] - s.y) * D1 * DX / dt;
       const out = Math.max(0, Q[i + 1]) + Math.max(0, -Q[i]), inn = Math.max(0, Q[i]) + Math.max(0, -Q[i + 1]);
       if (out > 0 && out - inn > avail) {
         const f = Math.max(0, (avail + inn) / out);
@@ -181,35 +269,39 @@ function step(dt, w) {
       }
     }
   }
-  const c = dt / (Dd * DX);
-  for (let i = 0; i < N; i++) S.yls[i] -= c * (Q[i + 1] - Q[i]);
+  const c1 = dt / (D1 * DX), c2 = dt / (D2 * DX);
+  for (let i = 0; i < N; i++) { S.yls[i] -= c1 * (Q[i + 1] - Q[i]); y2[i] -= c2 * (Q2[i + 1] - Q2[i]); }
   // rivers: sand is delivered to the beach on both sides of the mouth; a river mouth held
   // between jetties sends its sand out past the jetties instead (it never reaches the beach)
   for (const s of S.structures) if (s.type === 'river') {
     const ch = riverCells(s);
     if (ch.jettied) continue;
-    const band = 6, per = s.q * c / (2 * band);
+    const band = 6, per = s.q * c1 / (2 * band);
     for (let k = 1; k <= band; k++) { if (ch.i1 - k >= 0) S.yls[ch.i1 - k] += per; if (ch.i2 + k < N) S.yls[ch.i2 + k] += per; }
   }
   const rate = S.slr;
-  if (rate > 0) {
-    const R = rate * 1e-3 * Wstar() / Dd * dt;
-    for (let i = 0; i < N; i++) S.yls[i] -= R;
+  if (rate > 0) {                                                // Bruun: the whole profile, both lines, moves up and back
+    const R = rate * 1e-3 * Wstar() / Dact() * dt;
+    for (let i = 0; i < N; i++) { S.yls[i] -= R; y2[i] -= R; }
     S.eta += rate * 1e-3 * dt;
   }
-  const soft = softMask(), Stot = w.surge + (S.storm ? w.tide : 0);
+  // cross-shore exchange between the lines: the distance between them relaxes toward its equilibrium,
+  // fast when storms pull sand offshore, slowly when calm waves bring it back (sand volume is conserved)
+  const soft = pre.soft, Stot = w.surge + (S.storm ? w.tide : 0), fr1 = D2 / (D1 + D2), fr2 = D1 / (D1 + D2);
   for (let i = 0; i < N; i++) {
-    const Hl = Hc[i], yeq = Math.min(0, -W_CS * (0.068 * Hl + Stot) / (BERM + 1.28 * Hl));
-    const k = yeq < S.ycs[i] ? KE * soft.cse[i] : KA * soft.csr[i];
-    S.ycs[i] = yeq + (S.ycs[i] - yeq) * Math.exp(-k * dt);
+    const we = weqAt(Hc[i], Stot), wc = y2[i] - S.yls[i];
+    const k = wc < we ? KE * soft.cse[i] : KA * soft.csr[i];
+    const dw = (we - wc) * (1 - Math.exp(-k * dt));
+    S.yls[i] -= dw * fr1; y2[i] += dw * fr2;
   }
   // dunes: when run-up pushes the total water level above the dune toe, waves cut the dune back (Larson et al. 2004)
-  const seaLvl = S.eta + w.tide + w.surge, fall = Math.exp(-dt / 0.3), wall = wallMask(), perM = (Z_CREST - Z_TOE) / Dd;
+  const seaLvl = S.eta + w.tide + w.surge, fall = Math.exp(-dt / 0.3), wall = pre.wall, perM = (Z_CREST - Z_TOE) / D1;
+  const veg = pre.veg;
   S.twl = seaLvl + w.R2;
   for (let i = 0; i < N; i++) {
     S.over[i] *= fall;
     if (wall[i]) continue;
-    const yy = S.yls[i] + S.ycs[i];
+    const yy = S.yls[i];
     if (DUNE_TOE - yy > S.dune[i]) S.dune[i] = Math.min(DUNE_W, DUNE_TOE - yy); // the sea itself has eaten into the dune
     const width = yy - (DUNE_TOE - S.dune[i]);
     const ex = seaLvl + w.R2 * Math.sqrt(Math.max(0.05, Hc[i] / Math.max(w.Hb, 1e-3))) - toeZ(width);
@@ -220,32 +312,41 @@ function step(dt, w) {
     } else if (width > 20 && S.dune[i] > 0) {
       const dec = Math.min(S.dune[i], RD * soft.dr[i] * dt);
       S.dune[i] -= dec; S.yls[i] -= dec * perM;                 // wind blows beach sand back into the dune
+    } else if (veg[i] > 0 && width > 35 && S.dune[i] > -veg[i]) {
+      const dec = Math.min(S.dune[i] + veg[i], GRASS_RATE * dt);     // grass on the upper beach traps blowing sand and builds a new foredune under it
+      S.dune[i] -= dec; S.yls[i] -= dec * perM;
     }
   }
   // constraints
   for (const s of S.structures) {
-    if (s.type === 'seawall') for (let i = s.i1; i <= s.i2; i++) S.ycs[i] = Math.max(S.ycs[i], s.y - S.yls[i]);
+    if (s.type === 'seawall') for (let i = s.i1; i <= s.i2; i++) if (S.yls[i] < s.y) { y2[i] -= (s.y - S.yls[i]) * D1 / D2; S.yls[i] = s.y; }
+    if (s.type === 'island') for (let i = cellOf(s.x - s.rx); i <= cellOf(s.x + s.rx); i++) capAt(i, islandFront(s, (i + 0.5) * DX) - 3);
     if (s.type === 'breakwater') {
       const i1 = Math.max(0, Math.floor(s.x1 / DX)), i2 = Math.min(N - 1, Math.floor(s.x2 / DX));
-      for (let i = i1; i <= i2; i++) if (S.yls[i] + S.ycs[i] > s.y - 4) S.yls[i] = s.y - 4 - S.ycs[i];
+      for (let i = i1; i <= i2; i++) capAt(i, s.y - 4);
     }
   }
   // the river keeps its mouth open: the shoreline across the channel can't build out past the banks
   for (const s of S.structures) if (s.type === 'river') {
     const ch = riverCells(s), cap = Y0 + 20; // the mouth can build out a little, but the river flushes anything more
-    for (let i = ch.i1; i <= ch.i2; i++) if (S.yls[i] + S.ycs[i] > cap) S.yls[i] = cap - S.ycs[i];
+    for (let i = ch.i1; i <= ch.i2; i++) if (S.yls[i] > cap) S.yls[i] = cap;
   }
-  for (let i = 0; i < N; i++) if (S.yls[i] + S.ycs[i] < 8) S.yls[i] = 8 - S.ycs[i];
+  // plan-shape limiter: where a line turns steeper than about 35° (e.g. the sides of a tombolo), sand slumps sideways,
+  // conserving volume; not across groins, jetties or river mouths, where real steps belong
+  limitSlope(S.yls, pre.skip); limitSlope(y2, pre.skip);
+  for (let i = 0; i < N; i++) { if (S.yls[i] < 8) S.yls[i] = 8; if (y2[i] < S.yls[i] + 3) y2[i] = S.yls[i] + 3; }
   S.t += dt;
 }
 function advance(dtReal) {
   const simSpeed = S.storm ? 0.5 / 365 : S.speed; // storms run at 12 hours per second, so you can watch the tide
-  let remaining = simSpeed * dtReal, n = 0;
+  let remaining = simSpeed * dtReal, n = 0, pre = null;
   while (remaining > 1e-12 && n < 1500) {
     W = currentWaves();
+    if (n % 40 === 0) pre = prep(W);
     const dt = Math.min(stableDt(W), remaining);
-    step(dt, W); remaining -= dt; n++;
+    step(dt, W, pre); remaining -= dt; n++;
   }
+  growGrass(simSpeed * dtReal); stepMounds(simSpeed * dtReal, W);
   totals();
 }
 
@@ -282,43 +383,148 @@ function surfWidthAt(X) {
 }
 function seeded(n) { let s = n * 9301 + 49297; return () => { s = (s * 9301 + 49297) % 233280; return s / 233280; }; }
 
-// wave crest geometry (refraction over a Dean profile)
-function drawCrests(w, time) {
-  const A = Aprof(), om = w.om, k0 = om * om / g, c0 = g / om, s0 = Math.sin(w.th0), kx = k0 * s0;
-  const step = 5, nd = Math.floor(YL / step) + 1, F = new Float64Array(nd), I = new Float64Array(nd);
-  for (let i = 0; i < nd; i++) {
-    const d = i * step, h = A * Math.pow(d, 2 / 3) + 0.3, x0 = k0 * h;
-    const kh = x0 * Math.pow(1 / Math.tanh(Math.pow(x0, 0.75)), 2 / 3), k = kh / h, c = om / k;
-    const s = clamp(s0 * c / c0, -0.999, 0.999); I[i] = k * Math.sqrt(1 - s * s);
+// ---------- wave field: refraction and diffraction ----------
+// The wave phase psi solves the eikonal equation |grad psi| = k(x, y), where k comes from the linear dispersion
+// relation over the two-line bathymetry. Waves enter from the offshore edge (and the upwave side) with the
+// straight-contour (Snell) solution; land and structures are solid, so wave fronts bend around groin tips,
+// breakwater ends and headlands (diffraction) and turn to face the depth contours (refraction).
+// Crests are the contours psi = 2*pi*n + omega*t. The local angle at the breaker line drives the sand transport.
+const WFDX = 5, WNX = XL / WFDX + 1, WNY = YL / WFDX + 1, WNN = WNX * WNY;
+// three buffer sets: the field being computed (spread over a few frames so the animation never stalls),
+// the newest finished field, and the one before it; the drawing glides from the older to the newer one
+const wfBuf = () => ({ P: new Float64Array(WNN), K: new Float32Array(WNN), blk: new Uint8Array(WNN), fix: new Uint8Array(WNN), kd: new Float32Array(WNN),
+  near: new Float32Array(WNN), draw: new Uint8Array(WNN), ybs: new Float64Array(WNX).fill(60) });
+const WF = { cur: wfBuf(), prev: null, spare: wfBuf(), th: new Float64Array(N), ok: false, job: null, tStart: -1e9, tDone: 0, blend: 300,
+  get P() { return this.cur.P; }, get draw() { return this.cur.draw; }, get kd() { return this.cur.kd; } };
+const wfMix = () => WF.prev ? clamp((performance.now() - WF.tDone) / WF.blend, 0, 1) : 1;
+const surfW = X => { const i = clamp(Math.round(X / WFDX), 0, WNX - 1), a = wfMix(); return WF.prev ? WF.prev.ybs[i] + a * (WF.cur.ybs[i] - WF.prev.ybs[i]) : WF.cur.ybs[i]; }; // surf-zone width, smoothed alongshore (for drawing)
+function waveNumber(k0, h) { const x0 = k0 * h; return x0 * Math.pow(1 / Math.tanh(Math.pow(x0, 0.75)), 2 / 3) / h; } // Fenton & McKee (1990)
+function smoothNodes(src, sig) {               // the line, smoothed alongshore, at each wave-grid column
+  const out = new Float64Array(WNX), r = Math.ceil(3 * sig / DX);
+  for (let i = 0; i < WNX; i++) {
+    const X = i * WFDX, c = clamp(Math.floor(X / DX), 0, N - 1); let sw = 0, sv = 0;
+    for (let k = Math.max(0, c - r); k <= Math.min(N - 1, c + r); k++) { const d = (k + 0.5) * DX - X, wgt = Math.exp(-d * d / (2 * sig * sig)); sw += wgt; sv += wgt * src[k]; }
+    out[i] = sv / sw;
   }
-  F[nd - 1] = 0; for (let i = nd - 2; i >= 0; i--) F[i] = F[i + 1] + 0.5 * (I[i] + I[i + 1]) * step;
-  const phase = wavePhase, hs = heads();
-  const lo = Math.min(0, kx * XL), hi = Math.max(0, kx * XL) + F[0];
-  const nMin = Math.floor((lo - phase) / (2 * Math.PI)) - 1, nMax = Math.ceil((hi - phase) / (2 * Math.PI)) + 1;
-  const dstep = 12;
-  ctx.lineCap = 'round';
-  for (let n = nMin; n <= nMax; n++) {
-    let prev = null;
-    for (let X = 0; X <= XL; X += dstep) {
-      const target = 2 * Math.PI * n + phase - kx * X;
-      const dB = surfWidthAt(X), iB = Math.min(nd - 1, Math.floor(dB / step));
-      if (target <= 0 || target >= F[iB]) { prev = null; continue; }
-      let a = iB, b = nd - 1;
-      while (b - a > 1) { const m = (a + b) >> 1; if (F[m] > target) a = m; else b = m; }
-      const d = (a + (F[a] - target) / (F[a] - F[b] || 1)) * step;
-      const Yw = shoreAt(X) + d;
-      if (Yw > YL + 20) { prev = null; continue; }
-      const kd = shelterAt(X, Yw, w, hs);
-      const near = clamp(1 - (d - dB) / 260, 0, 1);
-      const pt = { x: px(X), y: py(Yw), a: (0.16 + 0.42 * near) * kd, lw: 1 + 1.6 * near };
-      if (prev) {
-        ctx.strokeStyle = `rgba(255,255,255,${((pt.a + prev.a) / 2).toFixed(3)})`;
-        ctx.lineWidth = (pt.lw + prev.lw) / 2;
-        ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(pt.x, pt.y); ctx.stroke();
-      }
-      prev = pt;
+  return out;
+}
+function stemHalfAt(s, Y) { if (s.type === 'headland') { const f = clamp(Y / s.tip, 0, 1); return 46 * (1 - 0.6 * f * f); } return s.type === 'jetty' ? 9 : 5; }
+function computeWaveField(w) { WF.job = null; const job = fieldJob(w); while (!job.next().done); }
+function* fieldJob(w) {
+  const B = WF.spare, { P, K, blk, fix, kd, near, draw } = B, A = Aprof(), k0 = w.om * w.om / g, kx = k0 * Math.sin(w.th0), h1 = H1(), w0 = Weq0();
+  const s1 = smoothNodes(y, 20), s2 = smoothNodes(S.y2, 20), hs = heads(), ybRaw = new Float64Array(WNX);
+  for (let i = 0; i < WNX; i++) {
+    const X = i * WFDX, c = cellOf(X), yb = Math.pow(Math.max(0.05, w.Hb * (Kd[c] || 1) / GAMMA) / A, 1.5), wid = Math.max(3, s2[i] - s1[i]);
+    ybRaw[i] = yb;
+    for (let j = 0; j < WNY; j++) {
+      const id = j * WNX + i, d = j * WFDX - s1[i];
+      P[id] = Infinity; fix[id] = 0; draw[id] = 0;
+      if (d <= 1) { blk[id] = 1; continue; }
+      blk[id] = 0;
+      let h = Math.max(0.2, d < wid ? h1 * Math.pow(d / wid, 2 / 3) : A * Math.pow(d - wid + w0, 2 / 3));
+      for (const m of S.mounds) { const dx = X - m.x, dy = j * WFDX - m.y; if (Math.abs(dx) < 3 * MSX && Math.abs(dy) < 3 * MSY) h -= moundThick(m, h) * Math.exp(-dx * dx / (2 * MSX * MSX) - dy * dy / (2 * MSY * MSY)); }
+      h = Math.max(0.3, h);
+      K[id] = waveNumber(k0, h);
+      if (d > yb) { draw[id] = 1; near[id] = clamp(1 - (d - yb) / 260, 0, 1); }
     }
   }
+  yield;
+  const solid = (xa, xb, ya, yb2) => {
+    for (let i = Math.max(0, Math.floor(xa / WFDX)); i <= Math.min(WNX - 1, Math.ceil(xb / WFDX)); i++)
+      for (let j = Math.max(0, Math.floor(ya / WFDX)); j <= Math.min(WNY - 1, Math.ceil(yb2 / WFDX)); j++) blk[j * WNX + i] = 1;
+  };
+  for (const st of S.structures) {
+    if (st.type === 'breakwater') solid(st.x1, st.x2, st.y - 6, st.y + 6);
+    else if (st.type === 'island') {
+      for (let i = Math.max(0, Math.floor((st.x - st.rx) / WFDX)); i <= Math.min(WNX - 1, Math.ceil((st.x + st.rx) / WFDX)); i++)
+        for (let j = Math.max(0, Math.floor((st.y - st.ry) / WFDX)); j <= Math.min(WNY - 1, Math.ceil((st.y + st.ry) / WFDX)); j++) {
+          const u = (i * WFDX - st.x) / st.rx, v = (j * WFDX - st.y) / st.ry; if (u * u + v * v <= 1) blk[j * WNX + i] = 1;
+        }
+    }
+    else if (isStem(st)) {
+      for (let Y = 0; Y <= st.tip; Y += WFDX) { const hw = stemHalfAt(st, Y); solid(st.x - hw, st.x + hw, Y, Y + WFDX); }
+      const hsp = headSpan(st); if (hsp) solid(hsp[0], hsp[1], st.tip - 5, st.tip + 5);
+    }
+  }
+  for (let i = 0; i < WNX; i++) { let sm = 0, n = 0; for (let k = Math.max(0, i - 8); k <= Math.min(WNX - 1, i + 8); k++) { sm += ybRaw[k]; n++; } B.ybs[i] = sm / n; }
+  // sources: the offshore edge, and the upwave side, from the straight-contour solution
+  const top = (WNY - 1) * WNX;
+  for (let i = 0; i < WNX; i++) if (!blk[top + i]) { P[top + i] = kx * i * WFDX; fix[top + i] = 1; }
+  const side = i => {
+    let acc = 0;
+    for (let j = WNY - 1; j >= 0; j--) {
+      const id = j * WNX + i; if (blk[id]) break;
+      if (j < WNY - 1) { const a = K[id], b = K[id + WNX]; acc += 0.5 * (Math.sqrt(Math.max(0, a * a - kx * kx)) + Math.sqrt(Math.max(0, b * b - kx * kx))) * WFDX; }
+      P[id] = kx * i * WFDX + acc; fix[id] = 1;
+    }
+  };
+  if (kx >= -1e-4) side(0);
+  if (kx <= 1e-4) side(WNX - 1);
+  // fast sweeping (Zhao 2005): Godunov upwind update, four sweep directions, twice
+  for (let it = 0; it < 2; it++) for (let sw = 0; sw < 4; sw++) {
+    const ia = sw & 1 ? WNX - 1 : 0, ib = sw & 1 ? -1 : WNX, di = sw & 1 ? -1 : 1;
+    const ja = sw & 2 ? 0 : WNY - 1, jb = sw & 2 ? WNY : -1, dj = sw & 2 ? 1 : -1;
+    for (let j = ja; j !== jb; j += dj) for (let i = ia; i !== ib; i += di) {
+      const id = j * WNX + i; if (blk[id] || fix[id]) continue;
+      const a = Math.min(i > 0 ? P[id - 1] : Infinity, i < WNX - 1 ? P[id + 1] : Infinity);
+      const b = Math.min(j > 0 ? P[id - WNX] : Infinity, j < WNY - 1 ? P[id + WNX] : Infinity);
+      if (a === Infinity && b === Infinity) continue;
+      const f = K[id] * WFDX, dd = a - b;
+      const u = Math.abs(dd) >= f ? Math.min(a, b) + f : 0.5 * (a + b + Math.sqrt(2 * f * f - dd * dd));
+      if (u < P[id]) P[id] = u;
+    }
+    if (sw & 1) yield;
+  }
+  // wave height factor from sheltering (for drawing)
+  for (let j = 0; j < WNY; j++) { for (let i = 0; i < WNX; i++) { const id = j * WNX + i; if (draw[id]) kd[id] = shelterAt(i * WFDX, j * WFDX, w, hs); } if (j % 40 === 39) yield; }
+  // local wave angle at the breaker line, for the sand transport
+  const th = WF.th, tmp = new Float64Array(N);   // (reads this job's buffer B)
+  for (let c = 0; c < N; c++) {
+    const X = (c + 0.5) * DX, yb = Math.pow(Math.max(0.05, w.Hb * (Kd[c] || 1) / GAMMA) / A, 1.5), Yb = y[c] + clamp(yb, 6, 200);
+    const i = clamp(Math.round(X / WFDX), 1, WNX - 2), j = clamp(Math.round(Yb / WFDX), 1, WNY - 2), id = j * WNX + i;
+    let t = w.thb;
+    if (!blk[id] && isFinite(P[id])) {
+      const L = P[id - 1], R = P[id + 1], D = P[id - WNX], U = P[id + WNX];
+      const gx = isFinite(L) && isFinite(R) ? (R - L) / (2 * WFDX) : isFinite(R) ? (R - P[id]) / WFDX : isFinite(L) ? (P[id] - L) / WFDX : NaN;
+      const gy = isFinite(D) && isFinite(U) ? (U - D) / (2 * WFDX) : isFinite(U) ? (U - P[id]) / WFDX : isFinite(D) ? (P[id] - D) / WFDX : NaN;
+      if (isFinite(gx) && isFinite(gy) && gy < 0) t = Math.atan2(gx, -gy);
+    }
+    tmp[c] = clamp(t, w.thb - 0.8, w.thb + 0.8);
+  }
+  tmp[0] = tmp[1]; tmp[N - 1] = tmp[N - 2];               // the edge columns are the wave sources
+  for (let c = 0; c < N; c++) th[c] = 0.25 * tmp[Math.max(0, c - 1)] + 0.5 * tmp[c] + 0.25 * tmp[Math.min(N - 1, c + 1)];
+  // rotate the buffers: the new field becomes current, the old current is kept for the glide
+  const now = performance.now(), oldCur = WF.cur, oldPrev = WF.prev;
+  WF.cur = B;
+  if (WF.ok) { WF.prev = oldCur; WF.spare = oldPrev || wfBuf(); } else { WF.prev = null; WF.spare = oldCur; }
+  WF.blend = clamp(now - WF.tDone, 150, 600); WF.tDone = now; WF.ok = true;
+}
+const WPATHS = 8;
+function drawCrests(w, time) {
+  const { P, draw, kd, near } = WF.cur, Pp = WF.prev ? WF.prev.P : P, mix = wfMix(), TAU = 2 * Math.PI, ph = wavePhase;
+  const paths = Array.from({ length: WPATHS }, () => new Path2D());
+  const cx = (i, t) => px((i + t) * WFDX), cy = (j, t) => py((j + t) * WFDX);
+  for (let j = 0; j < WNY - 1; j++) for (let i = 0; i < WNX - 1; i++) {
+    const a = j * WNX + i, b = a + 1, c = a + WNX, d = c + 1;
+    if (!(draw[a] && draw[b] && draw[c] && draw[d])) continue;
+    const va = Pp[a] + mix * (P[a] - Pp[a]), vb = Pp[b] + mix * (P[b] - Pp[b]), vc = Pp[c] + mix * (P[c] - Pp[c]), vd = Pp[d] + mix * (P[d] - Pp[d]);
+    if (!(isFinite(va) && isFinite(vb) && isFinite(vc) && isFinite(vd))) continue;
+    const pa = (va - ph) / TAU, pb = (vb - ph) / TAU, pc = (vc - ph) / TAU, pd = (vd - ph) / TAU;
+    const hi = Math.max(pa, pb, pc, pd), L = Math.floor(hi);
+    if (L <= Math.min(pa, pb, pc, pd)) continue;
+    const pts = [];                                   // where the crest crosses each cell edge
+    if ((pa - L) * (pb - L) < 0) pts.push([cx(i, (L - pa) / (pb - pa)), cy(j, 0)]);
+    if ((pb - L) * (pd - L) < 0) pts.push([cx(i + 1, 0), cy(j, (L - pb) / (pd - pb))]);
+    if ((pc - L) * (pd - L) < 0) pts.push([cx(i, (L - pc) / (pd - pc)), cy(j + 1, 0)]);
+    if ((pa - L) * (pc - L) < 0) pts.push([cx(i, 0), cy(j, (L - pa) / (pc - pa))]);
+    if (pts.length < 2) continue;
+    const alpha = (0.16 + 0.42 * (near[a] + near[d]) / 2) * (kd[a] + kd[d]) / 2;
+    const p = paths[clamp(Math.round(alpha * 12), 1, WPATHS) - 1];
+    p.moveTo(pts[0][0], pts[0][1]); p.lineTo(pts[1][0], pts[1][1]);
+    if (pts.length === 4) { p.moveTo(pts[2][0], pts[2][1]); p.lineTo(pts[3][0], pts[3][1]); }
+  }
+  ctx.lineCap = 'round';
+  paths.forEach((p, k) => { const al = (k + 1) / 12; ctx.strokeStyle = `rgba(255,255,255,${al.toFixed(3)})`; ctx.lineWidth = 0.8 + al * 3.2; ctx.stroke(p); });
 }
 
 // sand particles in the surf zone
@@ -377,27 +583,26 @@ function draw(time) {
   ctx.fillStyle = sg; ctx.fillRect(0, 0, CW, CH);
   // shallow water band + offshore bar
   ctx.beginPath();
-  for (let X = 0; X <= XL; X += 10) { const Y = shoreAt(X) + Math.min(420, surfWidthAt(X) * 2.2 + 30); X ? ctx.lineTo(px(X), py(Y)) : ctx.moveTo(px(X), py(Y)); }
+  for (let X = 0; X <= XL; X += 10) { const Y = shoreAt(X) + Math.min(420, surfW(X) * 2.2 + 30); X ? ctx.lineTo(px(X), py(Y)) : ctx.moveTo(px(X), py(Y)); }
   for (let X = XL; X >= 0; X -= 10) ctx.lineTo(px(X), py(shoreAt(X)));
   ctx.closePath(); ctx.fillStyle = 'rgba(110, 205, 208, 0.30)'; ctx.fill();
-  let barMean = 0; for (let i = 0; i < N; i++) barMean += S.ycs[i]; barMean /= N;
-  const barA = clamp(-barMean / 30, 0, 0.5);
-  if (barA > 0.03) {
-    ctx.strokeStyle = `rgba(232, 214, 160, ${barA.toFixed(3)})`; ctx.lineWidth = Math.max(3, 14 * sc);
-    ctx.beginPath();
-    for (let X = 0; X <= XL; X += 15) { const Y = shoreAt(X) + surfWidthAt(X) * 0.9 + 15; X ? ctx.lineTo(px(X), py(Y)) : ctx.moveTo(px(X), py(Y)); }
-    ctx.stroke();
-  }
+  // line 2 (the offshore contour of the two-line model); in storms sand moves out to it and builds a bar
+  let wMean = 0; for (let i = 0; i < N; i++) wMean += S.y2[i] - S.yls[i]; wMean /= N;
+  const barA = clamp((wMean - Weq0() - 12) / 40, 0, 0.5);
+  const line2 = () => { ctx.beginPath(); for (let i = 0; i < N; i++) { const X = (i + 0.5) * DX, Y = S.y2[i]; i ? ctx.lineTo(px(X), py(Y)) : ctx.moveTo(px(X), py(Y)); } };
+  if (barA > 0.03) { ctx.strokeStyle = `rgba(232, 214, 160, ${barA.toFixed(3)})`; ctx.lineWidth = Math.max(3, 14 * sc); line2(); ctx.stroke(); }
+  ctx.strokeStyle = 'rgba(230, 240, 235, 0.35)'; ctx.lineWidth = 1; ctx.setLineDash([2, 5]); line2(); ctx.stroke(); ctx.setLineDash([]);
   // river plumes
   for (const s of S.structures) if (s.type === 'river') {
     const sy = shoreAt(s.x), pr = (90 + s.w) * sc, rg = ctx.createRadialGradient(px(s.x), py(sy), 2, px(s.x), py(sy), pr);
     rg.addColorStop(0, 'rgba(150, 128, 70, 0.55)'); rg.addColorStop(1, 'rgba(150, 128, 70, 0)');
     ctx.fillStyle = rg; ctx.beginPath(); ctx.arc(px(s.x), py(sy), pr, 0, 7); ctx.fill();
   }
+  drawMounds();
   drawCrests(w, time);
   // surf foam
   ctx.beginPath();
-  for (let X = 0; X <= XL; X += 10) { const Y = shoreAt(X) + surfWidthAt(X); X ? ctx.lineTo(px(X), py(Y)) : ctx.moveTo(px(X), py(Y)); }
+  for (let X = 0; X <= XL; X += 10) { const Y = shoreAt(X) + surfW(X); X ? ctx.lineTo(px(X), py(Y)) : ctx.moveTo(px(X), py(Y)); }
   for (let X = XL; X >= 0; X -= 10) ctx.lineTo(px(X), py(shoreAt(X)));
   ctx.closePath(); ctx.fillStyle = 'rgba(255,255,255,0.20)'; ctx.fill();
   // sand
@@ -475,16 +680,17 @@ function draw(time) {
       ctx.strokeStyle = '#b3b8bc'; ctx.lineWidth = Math.max(5, 7 * sc);
       ctx.beginPath(); ctx.moveTo(px(s.x1), py(s.y)); ctx.lineTo(px(s.x2), py(s.y)); ctx.stroke();
     } else if (s.type === 'breakwater') drawRocks(s.x1, s.y, s.x2, s.y, 14, s.id);
+    else if (s.type === 'island') drawIsland(s);
     else if (s.type === 'headland') drawHeadland(s);
     else if (isStem(s)) {
       drawRocks(s.x, STEM_ROOT, s.x, s.tip, s.type === 'jetty' ? 18 : 10, s.id);
-      if (s.type === 'tgroin') drawRocks(s.x - s.head, s.tip, s.x + s.head, s.tip, 11, s.id + 99);
+      const hsp = headSpan(s); if (hsp) drawRocks(hsp[0], s.tip, hsp[1], s.tip, 11, s.id + 99);
     }
   }
   // particles
   ctx.fillStyle = 'rgba(250, 232, 180, 0.95)';
   for (const p of PARTS) {
-    const sh = shoreAt(p.x), yb = surfWidthAt(p.x), Y = sh + 3 + p.f * Math.max(4, yb - 3);
+    const sh = shoreAt(p.x), yb = surfW(p.x), Y = sh + 3 + p.f * Math.max(4, yb - 3);
     ctx.beginPath(); ctx.arc(px(p.x), py(Y), Math.max(1.3, 2.2 * sc), 0, 7); ctx.fill();
   }
   // draft preview
@@ -492,11 +698,12 @@ function draw(time) {
   // effects
   fx = fx.filter(e => time - e.t0 < 2.2);
   for (const e of fx) {
-    const a = 1 - (time - e.t0) / 2.2, R = (30 + 120 * (1 - a)) * sc;
+    const a = clamp(1 - (time - e.t0) / 2.2, 0, 1), R = (30 + 120 * (1 - a)) * sc;
     ctx.strokeStyle = `rgba(31,163,122,${a})`; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.arc(px(e.x), py(shoreAt(e.x)), R, 0, 7); ctx.stroke();
+    const ey = e.y ?? shoreAt(e.x);
+    ctx.beginPath(); ctx.arc(px(e.x), py(ey), R, 0, 7); ctx.stroke();
     ctx.fillStyle = `rgba(10,40,30,${a})`; ctx.font = '600 13px ' + getComputedStyle(document.body).fontFamily;
-    ctx.fillText(e.label, px(e.x) + 8, py(shoreAt(e.x) + 40));
+    ctx.fillText(e.label, px(e.x) + 8, py(ey + 40));
   }
   // storm tint
   if (w.sf > 0.02) {
@@ -528,6 +735,23 @@ function drawHeadland(s) {
     for (let k = 0; k < 6; k++) ell(px(x0 + (r() - 0.5) * hw), py(r() * land * 0.9 + 6), Math.max(2, 5 * sc), Math.max(2, 5 * sc), 0, '#3f6b33'); }
   ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 1.4; ctx.beginPath();   // foam around the tip
   ctx.arc(px(x0), py(top - 4), Math.max(4, hw * 0.5 * sc), Math.PI * 1.1, Math.PI * 1.9); ctx.stroke();
+}
+function drawMounds() {
+  for (const m of S.mounds) {
+    const h = m.h || depthAt(m.x, m.y), a = clamp(moundThick(m, Math.max(h, 0.5)) / Math.max(h, 0.5), 0.15, 0.8);
+    const g = ctx.createRadialGradient(px(m.x), py(m.y), 1, px(m.x), py(m.y), 2.2 * MSX * sc);
+    g.addColorStop(0, `rgba(225, 200, 140, ${a.toFixed(3)})`); g.addColorStop(1, 'rgba(225, 200, 140, 0)');
+    ctx.save(); ctx.translate(px(m.x), py(m.y)); ctx.scale(1, (MSY * sy) / (MSX * sc)); ctx.translate(-px(m.x), -py(m.y));
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(px(m.x), py(m.y), 2.2 * MSX * sc, 0, 7); ctx.fill(); ctx.restore();
+  }
+}
+function drawIsland(s) {
+  const cx = px(s.x), cy = py(s.y), rx = s.rx * sc, ry = s.ry * sy, r = seeded(s.id * 31 + 7);
+  ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.ellipse(cx, cy, rx + 4, ry + 4, 0, 0, 7); ctx.stroke(); // surf around it
+  ell(cx, cy, rx, ry, 0, '#e6cf98');                                                    // sandy shore
+  ell(cx, cy - ry * 0.05, rx * 0.78, ry * 0.72, 0, '#7f786f');                          // rocky core
+  ell(cx, cy - ry * 0.12, rx * 0.62, ry * 0.55, 0, '#5f8a45');                          // trees and grass
+  for (let k = 0; k < 7; k++) ell(cx + (r() - 0.5) * rx * 1.0, cy + (r() - 0.5) * ry * 0.8, Math.max(2, rx * 0.12), Math.max(2, ry * 0.18), 0, k % 2 ? '#3f6b33' : '#4c7c3b');
 }
 function drawOverwash() {
   // fans of sand and water where waves have poured over a flattened dune onto the road and lots
@@ -563,7 +787,7 @@ function softMask() {
     if (s.type !== 'grass') continue;
     const i1 = clamp(Math.floor(s.x1 / DX), 0, N - 1), i2 = clamp(Math.floor(s.x2 / DX), 0, N - 1);
     for (let i = i1; i <= i2; i++) {
-      const alive = S.yls[i] + S.ycs[i] >= DUNE_TOE + 2;
+      const alive = S.yls[i] >= DUNE_TOE + 2;
       if (s.type === 'grass' && alive) { SOFT.cse[i] *= 1 - VEG_B; SOFT.csr[i] *= 1 + VEG_G; SOFT.de[i] *= 0.6; SOFT.dr[i] *= 1.5; }
     }
   }
@@ -575,24 +799,56 @@ function wallMask() {
   return m;
 }
 // height of the dune toe above mean sea level: the beach rises about 1 m every 12 m inland, so a wide beach shields the dune
+const GRASS_RATE = 1.5, GRASS_MAX = 25;     // m/yr and m: how fast and how far grass can build the dune out onto the beach
+const GRASS_SPREAD = 2, GRASS_SEAWARD = 1.5;  // m/yr: rhizomes spread along the beach, and toward the water where the beach is wide
+const grassDensity = s => 0.3 + 0.7 * (1 - Math.exp(-Math.max(0, S.t - (s.t0 ?? S.t)) / 2)); // new plantings are sparse and fill in over a few years
+// how far vegetation reaches onto the beach in front of the original dune toe (m), per cell; the foredune can build out under it
+function vegReach() {
+  const v = new Float64Array(N);
+  for (const s of S.structures) if (s.type === 'grass') {
+    for (let i = cellOf(s.x1); i <= cellOf(s.x2); i++) if (S.yls[i] >= DUNE_TOE + 2) v[i] = Math.max(v[i], Math.min(GRASS_MAX, s.y2 - DUNE_TOE - 4));
+  }
+  return v;
+}
+// grass slowly spreads: along the beach (until it meets a structure, river or the map edge), up onto the dune,
+// and seaward over the dry upper beach; it dies back where the sea gets close
+function growGrass(dt) {
+  for (const s of S.structures) if (s.type !== 'grass') continue; else {
+    const blocked = X => X < 0 || X > XL || S.structures.some(o => o !== s && ((isStem(o) && Math.abs(o.x - X) < stemHalfAt(o, DUNE_TOE) + 4) || (o.type === 'seawall' && X >= o.x1 && X <= o.x2) || (o.type === 'river' && Math.abs(o.x - X) < riverBank(o))));
+    const nx1 = s.x1 - GRASS_SPREAD * dt, nx2 = s.x2 + GRASS_SPREAD * dt;
+    if (!blocked(nx1) && Math.min(shoreAt(nx1), shoreAt(s.x1)) > DUNE_TOE + 10) s.x1 = Math.max(0, nx1);
+    if (!blocked(nx2) && Math.min(shoreAt(nx2), shoreAt(s.x2)) > DUNE_TOE + 10) s.x2 = Math.min(XL, nx2);
+    s.y1 = Math.max(44, s.y1 - GRASS_SPREAD * dt);
+    let front = 1e9; for (let i = cellOf(s.x1); i <= cellOf(s.x2); i++) front = Math.min(front, S.yls[i]);
+    const room = front - 30;                                    // grass needs dry sand: it stays about 30 m back from the water
+    if (s.y2 < Math.min(room, DUNE_TOE + 4 + GRASS_MAX)) s.y2 = Math.min(s.y2 + GRASS_SEAWARD * dt, room, DUNE_TOE + 4 + GRASS_MAX);
+    else if (s.y2 > room + 10) s.y2 = Math.max(s.y1 + 4, room + 10);          // storms kill the front of the grass
+    s.y = (s.y1 + s.y2) / 2;
+  }
+}
 const toeZ = width => clamp(BETA_F * width, 1.5, 6);
 const cellOf = X => clamp(Math.floor(X / DX), 0, N - 1);
 function grassMask() {
   const m = new Uint8Array(N);
   for (const s of S.structures) if (s.type === 'grass') {
     const i1 = clamp(Math.floor(s.x1 / DX), 0, N - 1), i2 = clamp(Math.floor(s.x2 / DX), 0, N - 1);
-    for (let i = i1; i <= i2; i++) if (S.yls[i] + S.ycs[i] >= DUNE_TOE + 2) m[i] = 1; // grass drowns once the sea reaches the dune
+    for (let i = i1; i <= i2; i++) if (S.yls[i] >= DUNE_TOE + 2) m[i] = 1; // grass drowns once the sea reaches the dune
   }
   return m;
 }
 function drawGrass(time) {
   for (const s of S.structures) if (s.type === 'grass') {
-    ctx.fillStyle = 'rgba(110, 160, 70, 0.35)'; ctx.fillRect(px(s.x1), py(DUNE_TOE + 16), px(s.x2 - s.x1), 20 * sy);
-    const rr = seeded(s.id * 13 + 5), n = Math.round((s.x2 - s.x1) / 3.5);
+    const dens = grassDensity(s), y1 = s.y1, y2 = s.y2;
+    ctx.fillStyle = `rgba(110, 160, 70, ${(0.15 + 0.3 * dens).toFixed(3)})`;
+    ctx.fillRect(px(s.x1), py(y2), px(s.x2) - px(s.x1), (y2 - y1) * sy);
+    // tufts sit on a fixed lattice, so as the grass spreads and thickens new tufts appear without the old ones moving
     ctx.lineWidth = Math.max(1, 1.1 * sc); ctx.lineCap = 'round';
-    for (let i = 0; i < n; i++) {
-      const X = s.x1 + rr() * (s.x2 - s.x1), Y = DUNE_TOE - 3 + rr() * 19, sway = Math.sin(time * 1.5 + X * 0.05) * 1.2, h = 3 + rr() * 3;
-      ctx.strokeStyle = rr() < 0.5 ? '#4f7a35' : '#7ea85a';
+    const gx = 3.5, gy = 4;
+    for (let a = Math.floor(s.x1 / gx); a <= Math.ceil(s.x2 / gx); a++) for (let b = Math.floor(y1 / gy); b <= Math.ceil(y2 / gy); b++) {
+      const r = seeded(a * 7919 + b * 104729 + 13); if (r() > dens) continue;
+      const X = (a + r()) * gx, Y = (b + r()) * gy; if (X < s.x1 || X > s.x2 || Y < y1 || Y > y2) continue;
+      const sway = Math.sin(time * 1.5 + X * 0.05) * 1.2, h = (2.5 + r() * 3) * (0.6 + 0.4 * dens);
+      ctx.strokeStyle = r() < 0.5 ? '#4f7a35' : '#7ea85a';
       ctx.beginPath(); ctx.moveTo(px(X), py(Y)); ctx.lineTo(px(X - 1.5 + sway), py(Y + h)); ctx.moveTo(px(X), py(Y)); ctx.lineTo(px(X + sway * 0.5), py(Y + h * 1.2)); ctx.moveTo(px(X), py(Y)); ctx.lineTo(px(X + 1.5 + sway), py(Y + h)); ctx.stroke();
     }
   }
@@ -625,10 +881,11 @@ function drawRiver(s, time) {
 }
 function drawDraft() {
   const d = draft; ctx.globalAlpha = 0.75;
-  if (d.type === 'headland') drawHeadland(d);
-  else if (isStem(d)) { drawRocks(d.x, STEM_ROOT, d.x, d.tip, d.type === 'jetty' ? 18 : 10, 1); if (d.type === 'tgroin') drawRocks(d.x - d.head, d.tip, d.x + d.head, d.tip, 11, 2); }
+  if (d.type === 'island') drawIsland(Object.assign({ id: 1 }, d));
+  else if (d.type === 'headland') drawHeadland(d);
+  else if (isStem(d)) { drawRocks(d.x, STEM_ROOT, d.x, d.tip, d.type === 'jetty' ? 18 : 10, 1); const hsp = headSpan(d); if (hsp) drawRocks(hsp[0], d.tip, hsp[1], d.tip, 11, 2); }
   else if (d.type === 'breakwater') drawRocks(d.x1, d.y, d.x2, d.y, 14, 3);
-  else if (d.type === 'grass') { ctx.fillStyle = 'rgba(79,138,58,0.45)'; ctx.fillRect(px(d.x1), py(DUNE_TOE + 16), px(d.x2 - d.x1), 20 * sy); }
+  else if (d.type === 'grass') { ctx.fillStyle = 'rgba(79,138,58,0.45)'; ctx.fillRect(px(d.x1), py(d.y2), px(d.x2) - px(d.x1), (d.y2 - d.y1) * sy); ctx.strokeStyle = '#2f5a22'; ctx.setLineDash([4, 3]); ctx.lineWidth = 1.2; ctx.strokeRect(px(d.x1), py(d.y2), px(d.x2) - px(d.x1), (d.y2 - d.y1) * sy); ctx.setLineDash([]); }
   else if (d.type === 'seawall') { ctx.strokeStyle = '#b3b8bc'; ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(px(d.x1), py(d.y)); ctx.lineTo(px(d.x2), py(d.y)); ctx.stroke(); }
   ctx.globalAlpha = 1;
 }
@@ -637,8 +894,9 @@ function drawDraft() {
 // wrack line and the dunes, May 1 – Aug 31 (Maine IF&W). A site needs dry beach in front of the dune.
 const CHICKS_PER_PAIR = 1.44; // Maine statewide productivity, 2025 (Maine Audubon)
 const inSeason = () => { const m = Math.floor(monthPos()); return m >= 4 && m <= 7; };
+const nestBack = x => Math.max(DUNE_TOE + Math.max(0, -S.dune[cellOf(x)]), ...S.structures.filter(g => g.type === 'grass' && x >= g.x1 - 10 && x <= g.x2 + 10).map(g => g.y2));   // the back of the open sand (grass that has spread onto the beach is not nesting habitat)
 function nestStatus(n) {
-  const w = Math.min(shoreAt(n.x - 20), shoreAt(n.x), shoreAt(n.x + 20)) - DUNE_TOE;
+  const w = Math.min(shoreAt(n.x - 20), shoreAt(n.x), shoreAt(n.x + 20)) - nestBack(n.x);
   if (w < 8) return 'lost';
   if (w < 20) return 'risk';
   return 'ok';
@@ -646,11 +904,12 @@ function nestStatus(n) {
 function nestSeasonTick(w) {
   const m = Math.floor(monthPos());
   if (S.lastMonth !== m) {
-    if (m === 4) { S.nests.forEach(n => { n.washed = false; }); }
+    if (m === 4) { S.nests.forEach(n => { n.washed = false; }); if (S.lastMonth === 3) plovReturn(); }
     if (S.lastMonth === 7 && m === 8) {                                    // Sep: count the season's chicks
       const before = S.fledged;
       for (const n of S.nests) {
         const st = nestStatus(n);
+        n.good = !n.washed && st === 'ok';
         if (!n.washed && st !== 'lost') S.fledged += n.pairs * CHICKS_PER_PAIR * (st === 'risk' ? 0.5 : 1);
       }
     }
@@ -660,6 +919,24 @@ function nestSeasonTick(w) {
   if (w && w.sf > 0.4 && inSeason()) for (const n of S.nests) {
     const wid = Math.min(shoreAt(n.x - 20), shoreAt(n.x), shoreAt(n.x + 20)) - DUNE_TOE;
     if (wid < 25 + 30 * (w.surge + Math.max(0, w.tide || 0)) && !n.washed) { n.washed = true; toast('🌊 The storm washed over a nest!'); }
+  }
+}
+// each spring, a successful nesting area may gain a pair; a failed one may lose one; and, if any chicks
+// fledged last year, young birds may settle on a new stretch of wide, open beach (illustrative odds)
+function plovReturn() {
+  let good = 0;
+  for (const n of S.nests) {
+    if (n.good) { good++; if (n.pairs < 4 && Math.random() < 0.2 && !nestBlocked(n.x, n.pairs + 1, n)) n.pairs++; }
+    else if (n.good === false && n.pairs > 1 && Math.random() < 0.5) n.pairs--;
+    n.good = undefined;
+  }
+  if (good && S.nests.length < 8 && Math.random() < 0.15 + 0.05 * good) {
+    for (let tries = 0; tries < 40; tries++) {
+      const x = snapX(60 + Math.random() * (XL - 120));
+      if (nestBlocked(x, 1) || S.nests.some(n => Math.abs(n.x - x) < 160)) continue;
+      if (Math.min(shoreAt(x - 40), shoreAt(x), shoreAt(x + 40)) - nestBack(x) < 35) continue;
+      S.nests.push({ x, pairs: 1, washed: false, born: S.t }); break;
+    }
   }
 }
 function drawPlover(cx, cy, k) {
@@ -703,8 +980,8 @@ function drawScrape(cx, cy, r, eggs, wet) {
 function drawNests() {
   const season = inSeason();
   for (const n of S.nests) {
-    const st = nestStatus(n), sh = shoreAt(n.x);
-    const y1 = DUNE_TOE + 2, y2 = Math.min(DUNE_TOE + 26, sh - 1);
+    const st = nestStatus(n), sh = shoreAt(n.x), back = nestBack(n.x);
+    const y1 = back + 2, y2 = Math.min(back + 26, sh - 1);
     const half = 14 + 16 * n.pairs;
     const x1 = px(n.x - half), x2 = px(n.x + half), top = py(Math.max(y1 + 2, y2)), bot = py(y1), cy = (top + bot) / 2;
     // symbolic fencing: rope strung between stakes
@@ -806,19 +1083,23 @@ const TOOLS = [
     svg: '<circle cx="10" cy="10" r="6" fill="none" stroke="currentColor" stroke-width="2"/><path d="M15 15l5 5" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>' },
   { id: 'groin', label: 'Groin', hint: '<b>Groin:</b> click the water where you want the tip, or click the beach for a 80 m groin. Drag up or down to change its length.',
     svg: '<rect x="2" y="16" width="20" height="6" rx="1" fill="#e2c68c"/><rect x="10" y="3" width="4" height="15" rx="2" fill="currentColor"/>' },
-  { id: 'tgroin', label: 'T-groin / spur', hint: '<b>T-groin (spur):</b> a groin with a shore-parallel head that shelters the beach behind it. Click the water for the tip.',
+  { id: 'tgroin', label: 'T-groin', hint: '<b>T-groin:</b> a groin with a shore-parallel head on both sides that shelters the beach behind it. Click the water for the tip.',
     svg: '<rect x="2" y="16" width="20" height="6" rx="1" fill="#e2c68c"/><rect x="10.5" y="6" width="3" height="12" rx="1.5" fill="currentColor"/><rect x="5" y="4" width="14" height="3.5" rx="1.5" fill="currentColor"/>' },
+  { id: 'spur', label: 'Spur', hint: '<b>Spur:</b> a groin or jetty with an arm off one side only, like the new Camp Ellis spur. Click the water for the tip, then drag left or right to choose the side and length of the arm (a plain click points it toward the incoming waves).',
+    svg: '<rect x="2" y="16" width="20" height="6" rx="1" fill="#e2c68c"/><rect x="14" y="4" width="3" height="14" rx="1.5" fill="currentColor"/><rect x="4" y="4" width="13" height="3.5" rx="1.5" fill="currentColor"/>' },
   { id: 'jetty', label: 'Jetty', hint: '<b>Jetty:</b> a long, heavy groin, usually at a river mouth or harbor. Click the water far out for the tip.',
     svg: '<rect x="2" y="16" width="20" height="6" rx="1" fill="#e2c68c"/><rect x="9.5" y="1" width="5" height="17" rx="2" fill="currentColor"/>' },
+  { id: 'island', label: 'Island', hint: '<b>Island:</b> click in the water to place a small island; drag sideways to make it bigger. Like a breakwater, it blocks the waves, which bend around it, so the beach behind it builds out into a salient or even a tombolo joining the island.',
+    svg: '<path d="M1 19 Q6 17 12 19 T23 19" stroke="#2f82ad" stroke-width="1.6" fill="none"/><ellipse cx="12" cy="12" rx="9" ry="5" fill="#e2c68c" stroke="currentColor" stroke-width="1.1"/><ellipse cx="12" cy="11.2" rx="5.5" ry="3" fill="#5f8a45"/>' },
   { id: 'breakwater', label: 'Breakwater', hint: '<b>Breakwater:</b> click in the water (drag sideways to set its length) to place a rock barrier parallel to shore.',
     svg: '<rect x="2" y="16" width="20" height="6" rx="1" fill="#e2c68c"/><rect x="4" y="5" width="16" height="4" rx="2" fill="currentColor"/>' },
   { id: 'headland', label: 'Headland', hint: '<b>Rocky headland:</b> click the water for its tip. A natural point of rock: no sand gets around it, it shelters the beach in its lee, and it reflects waves back onto the beach beside it. Free, because nature built it.',
     svg: '<rect x="2" y="16" width="20" height="6" rx="1" fill="#e2c68c"/><path d="M6 18 C5 10 8 4 12 3 C16 4 19 10 18 18Z" fill="#7a7068" stroke="currentColor" stroke-width="1.2"/><path d="M8 17 C8 12 10 9 12 8 C14 9 16 12 16 17Z" fill="#6d8f4e"/>' },
-  { id: 'grass', label: 'Dune grass', hint: '<b>Dune grass:</b> drag along the top of the beach to plant beach grass. Its roots hold the dune together, so storms erode that stretch more slowly and it recovers faster. It won\'t stop sand drifting along the shore, and it dies where the sea reaches the dune.',
+  { id: 'grass', label: 'Dune grass', hint: '<b>Dune grass:</b> drag out a rectangle on the dune or upper beach to plant beach grass (a click plants a 120 m strip). It starts sparse and thickens over a few years, spreading about 2 m a year along the beach and 1.5 m a year toward the water while the beach is wide, building a new foredune. Its roots hold the dune together, so storms erode it more slowly. It won\'t stop sand drifting along the shore, and it dies back where the sea gets close.',
     svg: '<rect x="2" y="16" width="20" height="6" rx="1" fill="#e2c68c"/><path d="M5 17 L4 9 M5 17 L6 10 M10 17 L9 7 M10 17 L11.5 8 M15 17 L14 9 M15 17 L16.5 8 M19 17 L18.5 10" stroke="#4f8a3a" stroke-width="1.6" stroke-linecap="round" fill="none"/>' },
   { id: 'seawall', label: 'Seawall', hint: '<b>Seawall:</b> drag along the back of the beach to armour it. The shoreline cannot retreat past the wall.',
     svg: '<rect x="2" y="16" width="20" height="6" rx="1" fill="#e2c68c"/><rect x="2" y="11" width="20" height="4" fill="currentColor"/>' },
-  { id: 'nourish', label: 'Add sand', hint: '<b>Add sand:</b> click the beach to dump a nourishment fill (size is set under Storms and sea level).',
+  { id: 'nourish', label: 'Add sand', hint: '<b>Add sand:</b> click the beach for a beach fill, or click the water to dump sand offshore and watch the waves push it toward shore (sand dumped deeper than the closure depth never moves). The size is set with the Sand fill size slider.',
     svg: '<rect x="2" y="16" width="20" height="6" rx="1" fill="#e2c68c"/><path d="M5 16 Q12 5 19 16Z" fill="#d7b270" stroke="currentColor" stroke-width="1.4"/>' },
   { id: 'river', label: 'River', hint: '<b>River:</b> click the beach to add a river. Set its width and how much sand it carries with the River width and River sand sliders below. The sliders also change the river you placed last.',
     svg: '<rect x="2" y="16" width="20" height="6" rx="1" fill="#e2c68c"/><path d="M11 23 C8 18 15 15 11 9 M11 9 l-3 -5" stroke="#2f82ad" stroke-width="3.2" fill="none" stroke-linecap="round"/>' },
@@ -848,16 +1129,17 @@ function worldFromEvent(e) {
 function snapX(X) { return clamp(Math.round(X / DX) * DX, DX, XL - DX); }
 function makeDraft(tool, p) {
   const sh = shoreAt(p.X);
-  if (tool === 'groin' || tool === 'tgroin' || tool === 'jetty' || tool === 'headland') {
-    const def = tool === 'jetty' ? 260 : tool === 'headland' ? 200 : tool === 'tgroin' ? 90 : 80;
-    const x = snapX(p.X), tip = p.Y > sh + 15 ? p.Y : sh + def;
-    return { type: tool, x, tip: clamp(tip, sh + 10, YL - 20), head: 45, y0: p.Y, userTip: p.Y > sh + 15 };
+  if (tool === 'groin' || tool === 'tgroin' || tool === 'spur' || tool === 'jetty' || tool === 'headland') {
+    const def = tool === 'jetty' ? 260 : tool === 'headland' ? 200 : tool === 'tgroin' || tool === 'spur' ? 90 : 80;
+    const x = snapX(p.X), tip = p.Y > sh + 15 ? p.Y : sh + def, w = W || currentWaves();
+    return { type: tool, x, tip: clamp(tip, sh + 10, YL - 20), head: tool === 'spur' ? 70 : 45, side: w.thb >= 0 ? -1 : 1, x0: p.X, y0: p.Y, userTip: p.Y > sh + 15 };
   }
+  if (tool === 'island') { const Y = Math.max(p.Y, sh + 70); return { type: 'island', xs: p.X, x: clamp(p.X, 40, XL - 40), y: clamp(Y, sh + 60, YL - 50), rx: 70, ry: 40, isl: true }; }
   if (tool === 'breakwater') {
     const yb = clamp(Math.max(p.Y, sh + 40), sh + 30, YL - 30);
     return { type: 'breakwater', xs: p.X, x1: clamp(p.X - 110, 0, XL), x2: clamp(p.X + 110, 0, XL), y: yb, dragged: false };
   }
-  if (tool === 'grass') return { type: 'grass', xs: p.X, x1: clamp(p.X - 150, 0, XL), x2: clamp(p.X + 150, 0, XL), y: DUNE_TOE + 6, dragged: false };
+  if (tool === 'grass') { const Y = clamp(p.Y, 44, sh - 12); return { type: 'grass', xs: p.X, ys: Y, x1: clamp(p.X - 60, 0, XL), x2: clamp(p.X + 60, 0, XL), y1: DUNE_TOE - 4, y2: DUNE_TOE + 16, y: DUNE_TOE + 6, dragged: false, box: false }; }
   if (tool === 'seawall') {
     const yw = p.Y < sh - 5 && p.Y > DUNE_TOE - 5 ? p.Y : DUNE_TOE + 2;
     return { type: 'seawall', xs: p.X, x1: clamp(p.X - 150, 0, XL), x2: clamp(p.X + 150, 0, XL), y: yw, dragged: false };
@@ -866,14 +1148,25 @@ function makeDraft(tool, p) {
 }
 function updateDraft(p) {
   if (!draft) return;
-  if (isStem(draft)) { const sh = shoreAt(draft.x); if (Math.abs(p.Y - draft.y0) > 6) draft.tip = clamp(p.Y, sh + 10, YL - 20); }
-  else if (Math.abs(p.X - draft.xs) > 15) {
+  if (draft.isl) { const r = Math.abs(p.X - draft.xs); if (r > 10) { draft.rx = clamp(r, 30, 250); draft.ry = clamp(draft.rx * 0.55, 25, 90); } return; }
+  if (isStem(draft)) {
+    const sh = shoreAt(draft.x); if (Math.abs(p.Y - draft.y0) > 6) draft.tip = clamp(p.Y, sh + 10, YL - 20);
+    if (draft.type === 'spur' && Math.abs(p.X - draft.x0) > 12) { draft.side = p.X < draft.x ? -1 : 1; draft.head = clamp(Math.abs(p.X - draft.x), 25, 250); }
+  }
+  else if (Math.abs(p.X - draft.xs) > 15 || (draft.type === 'grass' && Math.abs(p.Y - draft.ys) > 6)) {
     draft.dragged = true; draft.x1 = clamp(Math.min(draft.xs, p.X), 0, XL); draft.x2 = clamp(Math.max(draft.xs, p.X), 0, XL);
+    if (draft.type === 'grass') {                               // the grass patch is the rectangle you drag out, on dry land
+      const Y = clamp(p.Y, 44, Math.min(shoreAt(draft.x1), shoreAt(draft.x2), shoreAt((draft.x1 + draft.x2) / 2)) - 12);
+      if (Math.abs(Y - draft.ys) > 6) { draft.box = true; draft.y1 = Math.min(draft.ys, Y); draft.y2 = Math.max(draft.ys, Y); }
+      draft.y = (draft.y1 + draft.y2) / 2;
+    }
   }
 }
 function commitDraft() {
   const d = draft; draft = null; if (!d) return;
   if (d.x2 !== undefined && d.x2 - d.x1 < 40) { d.x1 = clamp(d.xs - 60, 0, XL); d.x2 = clamp(d.xs + 60, 0, XL); }
+  if (d.type === 'island') { const sh = Math.max(shoreAt(d.x - d.rx), shoreAt(d.x), shoreAt(d.x + d.rx)); d.y = clamp(Math.max(d.y, sh + 20 + d.ry), 0, YL - d.ry - 5); delete d.isl; delete d.xs; }
+  if (d.type === 'grass') { if (d.y2 - d.y1 < 8) { d.y1 = DUNE_TOE - 4; d.y2 = DUNE_TOE + 16; } d.y = (d.y1 + d.y2) / 2; d.t0 = S.t; delete d.box; delete d.ys; }
   addStructure(d);
 }
 function addStructure(d) {
@@ -885,8 +1178,9 @@ function addStructure(d) {
   const before = S.nests.length; S.nests = S.nests.filter(n => !nestBlocked(n.x, n.pairs));
   if (S.nests.length < before && !S.silent) toast('🪹 A nesting area was in the way, so it was moved off the beach.');
 }
-function nestBlocked(x, pairs) {
+function nestBlocked(x, pairs, self) {
   const hw = 14 + 16 * pairs;
+  if (self && S.nests.some(n => n !== self && Math.abs(n.x - x) < hw + 14 + 16 * n.pairs + 10)) return true;
   return S.structures.some(s => (isStem(s) && Math.abs(s.x - x) < hw + 8) || (s.type === 'seawall' && x + hw > s.x1 && x - hw < s.x2) || (s.type === 'river' && Math.abs(s.x - x) < riverBank(s) + hw));
 }
 function toast(msg) {
@@ -898,7 +1192,7 @@ function toast(msg) {
 function placed() { if (!S.placed) { S.placed = true; document.getElementById('hint').hidden = true; } }
 function nourish(X) {
   const V = S.vol, sig0 = 120, Dd = Dact();
-  for (let i = 0; i < N; i++) { const x = (i + 0.5) * DX; S.yls[i] += V / (Dd * sig0 * Math.sqrt(2 * Math.PI)) * Math.exp(-((x - X) ** 2) / (2 * sig0 * sig0)); }
+  for (let i = 0; i < N; i++) { const x = (i + 0.5) * DX; S.yls[i] += V / (D1f() * sig0 * Math.sqrt(2 * Math.PI)) * Math.exp(-((x - X) ** 2) / (2 * sig0 * sig0)); }
   S.fills.push({ x: X, V, t: S.t }); S.sandAdded += V;
   fx.push({ x: X, t0: performance.now() / 1000, label: '+' + fmtVol(V) + ' m³' });
   if (!S.silent) toast(`🚚 Beep beep! ${fmtVol(V)} m³ of sand delivered.`);
@@ -909,11 +1203,15 @@ function eraseAt(p) {
   const seg = (x1, y1, x2, y2) => { const dx = x2 - x1, dy = y2 - y1, L = dx * dx + dy * dy || 1, t = clamp(((p.X - x1) * dx + (p.Y - y1) * dy) / L, 0, 1); return Math.hypot(p.X - x1 - t * dx, p.Y - y1 - t * dy); };
   for (const s of S.structures) {
     let d = 1e9;
-    if (isStem(s)) { d = seg(s.x, STEM_ROOT, s.x, s.tip); if (s.type === 'tgroin') d = Math.min(d, seg(s.x - s.head, s.tip, s.x + s.head, s.tip)); }
-    else if (s.type === 'breakwater' || s.type === 'seawall' || s.type === 'grass') d = seg(s.x1, s.y, s.x2, s.y);
+    if (isStem(s)) { d = seg(s.x, STEM_ROOT, s.x, s.tip); const hsp = headSpan(s); if (hsp) d = Math.min(d, seg(hsp[0], s.tip, hsp[1], s.tip)); }
+    else if (s.type === 'island') d = ((p.X - s.x) / s.rx) ** 2 + ((p.Y - s.y) / s.ry) ** 2 <= 1.2 ? 0 : 1e9;
+    else if (s.type === 'grass') d = p.X >= s.x1 && p.X <= s.x2 && p.Y >= s.y1 - 4 && p.Y <= s.y2 + 4 ? 0 : 1e9;
+    else if (s.type === 'breakwater' || s.type === 'seawall') d = seg(s.x1, s.y, s.x2, s.y);
     else if (s.type === 'river') d = seg(s.x, 0, s.x, shoreAt(s.x));
     if (d < bd) { bd = d; best = s; }
   }
+  const mi = S.mounds.findIndex(m => Math.abs(m.x - p.X) < MSX && Math.abs(m.y - p.Y) < MSY);
+  if (mi >= 0 && !best) { S.mounds.splice(mi, 1); return; }
   let bestNest = null;
   for (const n of S.nests) { const hw = 14 + 16 * n.pairs; const d = seg(n.x - hw, DUNE_TOE + 12, n.x + hw, DUNE_TOE + 12); if (d < bd) { bd = d; bestNest = n; } }
   if (bestNest) { S.nests = S.nests.filter(n => n !== bestNest); return; }
@@ -923,7 +1221,7 @@ cv.addEventListener('pointerdown', e => {
   const p = worldFromEvent(e);
   if (S.tool === 'inspect') return;
   if (S.tool === 'erase') { eraseAt(p); return; }
-  if (S.tool === 'nourish') { nourish(snapX(p.X)); return; }
+  if (S.tool === 'nourish') { if (p.Y > shoreAt(p.X) + 8) nourishOffshore(snapX(p.X), p.Y); else nourish(snapX(p.X)); return; }
   if (S.tool === 'river') { addStructure({ type: 'river', x: snapX(p.X), w: S.riverW, q: S.rq }); toast(`🏞️ A new river, ${S.riverW} m wide, bringing ${fmtVol(S.rq)} m³ of sand a year.`); return; }
   if (S.tool === 'build') {
     const h = S.houses.filter(h => houseVisible(h)).sort((a, b) => Math.abs(a.x - p.X) - Math.abs(b.x - p.X))[0];
@@ -950,26 +1248,33 @@ function showTip(e, p) {
   const nestTxt = nest ? `<br><b>Shorebird nesting area</b>: ${nest.pairs} plover pair${nest.pairs > 1 ? 's' : ''}, ${{ ok: 'safe', risk: 'at risk (narrow beach)', lost: 'lost (no dry beach)' }[nestStatus(nest)]}${nest.washed && inSeason() ? ', washed out this season' : ''}` : '';
   const where = `<span class="mono">x = ${Math.round(p.X)} m</span>`;
   const grass = S.structures.find(st => st.type === 'grass' && p.X >= st.x1 && p.X <= st.x2);
-  const grassTxt = grass ? (shoreAt(p.X) >= DUNE_TOE + 2 ? '<br>🌾 Dune grass here: storms erode the beach and dune 40% slower' : '<br>🌾 Dune grass here has been washed out') : '';
+  const grassTxt = grass ? (shoreAt(p.X) >= DUNE_TOE + 2 ? '<br>🌾 Dune grass here: storms erode the beach and dune 40% slower' + `<br>🌱 ${Math.round(grassDensity(grass) * 100)}% cover, ${(grass.x2 - grass.x1).toFixed(0)} m long` + (S.dune[cellOf(p.X)] < -0.5 ? `; new foredune ${(-S.dune[cellOf(p.X)]).toFixed(0)} m out onto the beach` : '') : '<br>🌾 Dune grass here has been washed out') : '';
   const onWall = S.structures.find(st => st.type === 'seawall' && p.X >= st.x1 && p.X <= st.x2 && Math.abs(p.Y - st.y) < 8);
   const onHead = S.structures.find(st => st.type === 'headland' && Math.abs(p.X - st.x) < 45 && p.Y < st.tip + 6) ;
   const cell = cellOf(p.X), dn = S.dune[cell], faceY = DUNE_TOE - dn;
   const duneTxt = dn > 0.6 ? `<br>✂️ Storm waves have cut the dune back ${dn.toFixed(1)} m${dn >= DUNE_W - 0.5 ? ' (it is gone!)' : ''}` : '';
   const overTxt = S.over[cell] > 0.05 ? '<br>🌊 Waves have washed over the dune here' : '';
-  const onRock = S.structures.find(st => (isStem(st) && st.type !== 'headland' && Math.abs(p.X - st.x) < 12 && p.Y > STEM_ROOT && p.Y < st.tip + 6) || (st.type === 'breakwater' && p.X > st.x1 && p.X < st.x2 && Math.abs(p.Y - st.y) < 10) || (st.type === 'tgroin' && Math.abs(p.Y - st.tip) < 10 && Math.abs(p.X - st.x) < st.head));
+  const onRock = S.structures.find(st => (isStem(st) && st.type !== 'headland' && Math.abs(p.X - st.x) < 12 && p.Y > STEM_ROOT && p.Y < st.tip + 6) || (st.type === 'breakwater' && p.X > st.x1 && p.X < st.x2 && Math.abs(p.Y - st.y) < 10) || (headSpan(st) && Math.abs(p.Y - st.tip) < 10 && p.X >= headSpan(st)[0] - 4 && p.X <= headSpan(st)[1] + 4));
   const river = S.structures.find(st => st.type === 'river' && Math.abs(p.X - st.x) < st.w / 2 && p.Y < sh);
-  if (onHead) {
+  const isl = S.structures.find(st => st.type === 'island' && ((p.X - st.x) / st.rx) ** 2 + ((p.Y - st.y) / st.ry) ** 2 <= 1.1);
+  const mound = S.mounds.find(m => Math.abs(m.x - p.X) < MSX * 1.2 && Math.abs(m.y - p.Y) < MSY * 1.5);
+  if (isl) {
+    const gap = islandFront(isl, isl.x) - shoreAt(isl.x);
+    tip.innerHTML = `🏝️ <b>Island</b> · ${where}<br>${Math.round(2 * isl.rx)} m across, ${Math.max(0, gap).toFixed(0)} m from the beach<br>${gap < 8 ? 'A tombolo now joins it to the beach' : 'Waves bend around it; the beach behind it builds out'}`;
+  } else if (mound) {
+    tip.innerHTML = `🟫 <b>Sand dumped offshore</b> · ${where}<br>${fmtVol(mound.V)} m³ left, ${(mound.h || 0).toFixed(1)} m deep<br>${mound.stuck ? 'Below the closure depth: waves can\'t move it' : 'Waves are pushing it toward the beach'}`;
+  } else if (onHead) {
     tip.innerHTML = `⛰️ <b>Rocky headland</b> · ${where}<br>Blocks waves from its side, so the beach in its lee is calm, and no sand gets around it. Waves bounce off it, making them bigger on the beach just beside it.`;
   } else if (onRock) {
-    const name = { groin: 'Groin', jetty: 'Jetty', tgroin: 'T-groin (spur)', breakwater: 'Breakwater' }[onRock.type];
+    const name = { groin: 'Groin', jetty: 'Jetty', tgroin: 'T-groin', spur: 'Spur', breakwater: 'Breakwater' }[onRock.type];
     tip.innerHTML = `🪨 <b>${name}</b> · ${where}` + (isStem(onRock) ? `<br>Sticks out ${Math.max(0, onRock.tip - sh).toFixed(0)} m past the shoreline<br>Sand bypassing it: ${Math.round((onRock.byp ?? 1) * 100)}%` : `<br>${(onRock.y - sh).toFixed(0)} m offshore`) + (onRock.type === 'jetty' ? '<br>Reflects waves onto the beach just updrift' : '');
   } else if (onWall) {
     tip.innerHTML = `🧱 <b>Seawall</b> · ${where}<br>Dry beach in front: ${Math.max(0, sh - onWall.y).toFixed(0)} m`;
   } else if (river) {
     tip.innerHTML = `🏞️ <b>River</b> · ${where}<br>${river.w} m wide, bringing ${fmtVol(river.q)} m³ of sand a year` + (riverCells(river).jettied ? '<br>(its sand goes out past the jetties)' : '');
   } else if (p.Y > sh) {
-    const d = p.Y - sh, depth = Aprof() * Math.pow(d, 2 / 3), inSurf = d < surfWidthAt(p.X);
-    tip.innerHTML = `🌊 <b>Water</b> · ${where}<br>${d.toFixed(0)} m from the shoreline, about ${depth.toFixed(1)} m deep<br>${inSurf ? `In the surf zone: waves breaking at ${(Hc[i] || 0).toFixed(2)} m<br>Sand drifting ${fmtQ(q)}` : 'Beyond the breakers'}`;
+    const d = p.Y - sh, wid = Math.max(3, S.y2[i] - S.yls[i]), depth = d < wid ? H1() * Math.pow(d / wid, 2 / 3) : Aprof() * Math.pow(d - wid + Weq0(), 2 / 3), inSurf = d < surfWidthAt(p.X);
+    tip.innerHTML = `🌊 <b>Water</b> · ${where}<br>${d.toFixed(0)} m from the shoreline, about ${depth.toFixed(1)} m deep<br>${inSurf ? `In the surf zone: waves breaking at ${(Hc[i] || 0).toFixed(2)} m, ${Math.abs(WF.th[i] * 180 / Math.PI).toFixed(0)}° to the beach<br>Sand drifting ${fmtQ(q)}` : 'Beyond the breakers'}${(() => { const n = clamp(Math.round(p.Y / WFDX), 0, WNY - 1) * WNX + clamp(Math.round(p.X / WFDX), 0, WNX - 1); return WF.draw[n] && WF.kd[n] < 0.9 ? `<br>Sheltered: waves ${Math.round((1 - WF.kd[n]) * 100)}% smaller` : WF.draw[n] && WF.kd[n] > 1.03 ? `<br>Reflected waves: ${Math.round((WF.kd[n] - 1) * 100)}% bigger` : ''; })()}<br><span style="opacity:.75">Line 2 (the ${H1().toFixed(1)} m depth contour) is ${Math.max(0, S.y2[i] - S.yls[i]).toFixed(0)} m offshore here</span>`;
   } else if (p.Y < DUNE_TOE) {
     const hs = S.houses.find(h => Math.abs(h.x - p.X) < 20);
     const lot = p.Y >= 14 && p.Y < 42 && hs ? (hs.gone ? '🏚️ <b>Empty lot</b>' : S.t - (hs.flood ?? -9) < 0.6 ? '🏡 <b>House</b> (flooded by overwash)' : '🏡 <b>House</b>') : null;
@@ -1183,7 +1488,7 @@ const PLACES = {
     build: () => {
       addStructure({ type: 'river', x: 60, w: 140, q: 60000 });
       addStructure({ type: 'seawall', x1: 150, x2: 380, y: DUNE_TOE + 2 });
-      addStructure({ type: 'breakwater', x1: 1020, x2: 1180, y: Y0 + 110 });
+      addStructure({ type: 'island', x: 1100, y: Y0 + 150, rx: 85, ry: 45 });
       addStructure({ type: 'river', x: 1460, w: 40, q: 5000 });
     },
     blurb: 'Phippsburg. A south-facing beach between the Kennebec River (E end) and the Morse River (W end). Fox Island, a rock island just offshore, acts like a natural breakwater with a tombolo that comes and goes. A riprap seawall at Hunnewell Beach causes erosion at its end. The beach swings hundreds of feet as the river channels move, which the model can\'t capture.' }
@@ -1215,11 +1520,13 @@ function loadPlace(k) {
 }
 
 function resetBeach() {
-  S.alert = null; S.houses.forEach(h => { h.gone = false; h.flood = -9; h.floodStorm = -1; }); S.dune.fill(0); S.over.fill(0); S.overToast = -1; S.floods = 0; S.t = 0; S.eta = 0; S.fills = []; S.sandAdded = 0; S.storms = 0; S.storm = null; S.fledged = 0; S.lastMonth = -1; S.nests.forEach(n => { n.washed = false; });
+  S.structures.forEach(st => { if (st.type === 'grass') st.t0 = 0; });
+  S.alert = null; S.houses.forEach(h => { h.gone = false; h.flood = -9; h.floodStorm = -1; }); S.dune.fill(0); S.over.fill(0); S.overToast = -1; S.floods = 0; S.t = 0; S.eta = 0; S.fills = []; S.mounds = []; S.sandAdded = 0; S.storms = 0; S.storm = null; S.fledged = 0; S.lastMonth = -1; S.nests.forEach(n => { n.washed = false; });
   $('btnNoreaster').disabled = $('btnTropical').disabled = false;
   W = currentWaves();
   const yeq = -W_CS * (0.068 * W.Hb) / (BERM + 1.28 * W.Hb);
-  for (let i = 0; i < N; i++) { S.ycs[i] = yeq; S.yls[i] = Y0 - yeq; Hc[i] = W.Hb; }
+  for (let i = 0; i < N; i++) { S.yls[i] = Y0; S.y2[i] = Y0 + weqAt(W.Hb, 0); Hc[i] = W.Hb; }
+  WF.ok = false; WF.job = null; WF.prev = null; WF.tStart = -1e9;
   Q.fill(0); totals(); scatterParticles();
 }
 
@@ -1229,8 +1536,8 @@ const col = (c, s) => String.raw`{\color{#${c}}{${s}}}`;
 function activeSet() {
   const t = new Set(S.structures.map(s => s.type));
   return {
-    groin: t.has('groin') || t.has('jetty') || t.has('tgroin') || t.has('headland'),
-    breakwater: t.has('breakwater') || t.has('tgroin'),
+    groin: t.has('groin') || t.has('jetty') || t.has('tgroin') || t.has('spur') || t.has('headland'),
+    breakwater: t.has('breakwater') || t.has('tgroin') || t.has('spur') || t.has('island'),
     seawall: t.has('seawall'), grass: t.has('grass'), river: t.has('river'), fill: S.fills.length > 0,
     storm: S.storms > 0, tide: S.storms > 0, slr: S.slr > 0,
     coast: t.has('headland') || t.has('jetty')
@@ -1238,42 +1545,43 @@ function activeSet() {
 }
 function masterTeX(a) {
   let src = '';
-  if (a.river || a.fill) src += col(HX.green, String.raw`+\,\frac{q(x,t)}{D}`);
-  if (a.slr) src += col(HX.teal, String.raw`-\,\frac{W_*}{D}\frac{d\eta}{dt}`);
-  let q = String.raw`a_1 \sin 2(\theta_b-\phi)`;
-  if (a.breakwater) q += col(HX.purple, String.raw`\;-\;a_2\cos(\theta_b-\phi)\,\frac{\partial H_b}{\partial x}`);
+  if (a.river || a.fill) src += col(HX.green, String.raw`+\,\frac{q}{D_1}`);
+  const slr = a.slr ? col(HX.teal, String.raw`-\,\frac{W_*}{D}\frac{d\eta}{dt}`) : '';
+  let q = String.raw`a_1 \sin 2(\theta_b-\phi_i)`;
+  if (a.breakwater || a.coast) q += col(HX.purple, String.raw`-a_2\cos(\theta_b-\phi_i)\frac{\partial H_b}{\partial x}`);
   const surge = (a.storm ? col(HX.amber, '+\\,S') : '') + (a.tide ? col(HX.navy, '+\\,\\eta_T') : '');
-  let lines = [
-    String.raw`y &= y_s + y_c`,
-    String.raw`\frac{\partial y_s}{\partial t} &= -\frac{1}{D}\frac{\partial Q}{\partial x}` + src,
-    String.raw`Q &= \left(H_b^2 C_g\right)_b\left[${q}\right]`,
-    String.raw`\frac{\partial y_c}{\partial t} &= ${a.grass ? col(HX.grass, 'k_v') : 'k'}\,\left(y_{eq}-y_c\right),\quad y_{eq} = -W\,\frac{0.068H_b${surge}}{B+1.28H_b}`,
+  const lines = [
+    String.raw`\frac{\partial y_1}{\partial t} &= -\frac{1}{D_1}\frac{\partial Q_1}{\partial x} + \frac{q_y}{D_1}` + src + slr,
+    String.raw`\frac{\partial y_2}{\partial t} &= -\frac{1}{D_2}\frac{\partial Q_2}{\partial x} - \frac{q_y}{D_2}` + slr,
+    String.raw`Q_i &= f_i\left(H_b^2 C_g\right)_b\left[${q}\right]`,
+    String.raw`q_y &= ${a.grass ? col(HX.grass, 'K_v') : 'K'}\left(y_2-y_1-W_{eq}\right),\quad W_{eq} = W_0 + W'\,\frac{0.068H_b${surge}}{B+1.28H_b}`,
+    String.raw`\left|\nabla\psi\right| &= k(h),\quad \theta_b = \angle\nabla\psi\ \text{at the breakers}`,
     String.raw`\frac{dx_d}{dt} &= ${a.grass ? col(HX.grass, 'm_d') : ''}\frac{4C_s}{T(z_c-z_t)}\left(TWL-z_t\right)_+^2,\quad TWL = \eta${a.tide ? col(HX.navy, '+\\eta_T') : ''}${a.storm ? col(HX.amber, '+S') : ''}+R_2`
   ];
   const bc = [];
-  if (a.groin) bc.push(col(HX.orange, String.raw`Q(x_g) = \mathrm{BYP}_g\,Q`));
+  if (a.groin) bc.push(col(HX.orange, String.raw`Q_i(x_g) = \mathrm{BYP}_i\,Q_i`));
   if (a.coast) bc.push(col(HX.rock, String.raw`H_b \to K\,H_b`));
-  if (a.seawall) bc.push(col(HX.slate, String.raw`y \ge y_w`));
+  if (a.seawall) bc.push(col(HX.slate, String.raw`y_1 \ge y_w`));
   if (bc.length) lines.push(String.raw`&\text{with}\;\; ` + bc.join(String.raw`,\;\; `));
   return String.raw`\begin{aligned}` + lines.join(String.raw`\\[4pt]`) + String.raw`\end{aligned}`;
 }
 const TERMS = [
-  { key: 'budget', core: true, c: 'blue', title: 'Sand budget', tag: '✓ always on',
-    tex: String.raw`\frac{\partial y_s}{\partial t} = -\frac{1}{D}\frac{\partial Q}{\partial x}`,
-    text: 'Think of the beach as a row of buckets. Where more sand leaves a stretch than arrives (\\(Q\\) grows along the shore), the shoreline moves back. \\(D\\) is the depth of beach that moves: closure depth \\(h_*\\) plus berm height \\(B\\).',
-    live: [['D', 'D'], ['Beach length', 'len']] },
+  { key: 'budget', core: true, c: 'blue', title: 'Sand budget: two lines', tag: '✓ always on',
+    tex: String.raw`\begin{gathered}\frac{\partial y_1}{\partial t} = -\frac{1}{D_1}\frac{\partial Q_1}{\partial x} + \frac{q_y}{D_1}\\ \frac{\partial y_2}{\partial t} = -\frac{1}{D_2}\frac{\partial Q_2}{\partial x} - \frac{q_y}{D_2}\end{gathered}`,
+    text: 'The model follows two lines along the beach (Bakker, 1968): the shoreline \\(y_1\\) and an offshore depth contour \\(y_2\\) (the dotted line in the sea). Each is a row of buckets: where more sand leaves a stretch than arrives, the line moves back. \\(D_1 = B + h_1\\) is the part of the profile that moves with the shoreline and \\(D_2 = h_* - h_1\\) the part below it. \\(q_y\\) moves sand between the lines.',
+    live: [['\\(h_1\\)', 'h1'], ['\\(D_1,\\ D_2\\)', 'D12'], ['Beach length', 'len']] },
   { key: 'drift', core: true, c: 'blue', title: 'Longshore drift', tag: '✓ always on',
-    tex: String.raw`\begin{gathered}Q = \left(H_b^2C_g\right)_b\,a_1\sin 2(\theta_b-\phi)\\ \phi=\arctan\frac{\partial y}{\partial x}\end{gathered}`,
-    text: 'Waves that hit the beach at an angle push sand along it, fastest at 45° and not at all when they arrive straight on. \\(\\phi\\) is the local tilt of the shoreline, so a beach that turns to face the waves slows its own drift.',
-    live: [['Drift mid-beach', 'Qmid'], ['\\(a_1\\)', 'a1']] },
-  { key: 'waves', core: true, c: 'blue', title: 'Waves reaching the beach', tag: '✓ always on',
-    tex: String.raw`\begin{gathered}H_b = 0.39\,g^{1/5}\left(T H_0^2\right)^{2/5}\\ \frac{\sin\theta_b}{C_b} = \frac{\sin\theta_0}{C_0}\end{gathered}`,
-    text: 'Offshore waves of height \\(H_0\\) and period \\(T\\) grow as the water shallows and break at height \\(H_b\\). They also bend (refract) to face the beach, so a steep offshore angle becomes a small one at the breakers.',
-    live: [['\\(H_0\\)', 'H0'], ['\\(H_b\\)', 'Hb'], ['\\(\\theta_0 \\to \\theta_b\\)', 'ang'], ['Surf zone', 'yB']] },
+    tex: String.raw`\begin{gathered}Q_i = f_i\left(H_b^2C_g\right)_b\,a_1\sin 2(\theta_b-\phi_i)\\ f_1 = \min\!\left(1,\ \frac{y_2-y_1}{y_B}\right),\quad f_2 = 1-f_1\end{gathered}`,
+    text: 'Waves that hit the beach at an angle push sand along it, fastest at 45° and not at all when they arrive straight on. The surf zone (width \\(y_B\\)) is shared: the part inside line 2 carries line 1\'s sand, the part beyond carries line 2\'s. In storms the surf zone widens and more sand moves along the outer line. \\(\\phi_i\\) is each line\'s own tilt, so a line that turns to face the waves slows its own drift.',
+    live: [['Drift mid-beach', 'Qmid'], ['Share on line 1', 'fshare'], ['\\(a_1\\)', 'a1']] },
+  { key: 'waves', core: true, c: 'blue', title: 'Waves: refraction and diffraction', tag: '✓ always on',
+    tex: String.raw`\begin{gathered}H_b = 0.39\,g^{1/5}\left(T H_0^2\right)^{2/5}\\ \left|\nabla\psi\right| = k,\qquad \omega^2 = gk\tanh kh\\ \text{crests: } \psi = 2\pi n + \omega t\end{gathered}`,
+    text: 'Offshore waves of height \\(H_0\\) grow as the water shallows and break at height \\(H_b\\). The sim tracks the wave phase \\(\\psi\\) over the whole sea bed. Waves slow down in shallow water, so crests bend to face the depth contours (refraction), and they wrap around the ends of groins, jetties, breakwaters and headlands into their shadows (diffraction). The wave angle at the breakers, \\(\\theta_b\\), drives the drift.',
+    live: [['\\(H_0\\)', 'H0'], ['\\(H_b\\)', 'Hb'], ['\\(\\theta_0 \\to \\theta_b\\)', 'ang'], ['\\(\\theta_b\\) along the beach', 'thRange'], ['Surf zone', 'yB']] },
   { key: 'cross', core: true, c: 'blue', title: 'Beach breathing (cross-shore)', tag: '✓ always on',
-    tex: String.raw`\begin{gathered}\frac{\partial y_c}{\partial t}=k\,(y_{eq}-y_c)\\ y_{eq}=-W\frac{0.068H_b+S}{B+1.28H_b}\end{gathered}`,
-    text: 'Big waves pull sand off the beach into an offshore bar, so the beach narrows; calm waves push it back. Erosion is fast (\\(k \\approx 150\\) per year, days) and recovery is slow (\\(k \\approx 8\\) per year, weeks). This is why beaches are narrower in winter.',
-    live: [['\\(y_{eq}\\) now', 'yeq'], ['\\(y_c\\) now', 'yc']] },
+    tex: String.raw`\begin{gathered}q_y = K\,(y_2-y_1-W_{eq})\\ W_{eq} = W_0 + W'\,\frac{0.068H_b+S}{B+1.28H_b}\end{gathered}`,
+    text: 'Big waves pull sand off the beach (line 1) out to line 2, where it builds a bar; calm waves bring it back. The lines move apart or together until their distance reaches \\(W_{eq}\\): fast in storms (days, about 150 per year) and slowly afterwards (weeks, about 8 per year). \\(W_0\\) is the calm distance from the Dean profile. This is why beaches are narrower in winter.',
+    live: [['\\(W_{eq}\\) now', 'yeq'], ['\\(y_2-y_1\\) now', 'yc']] },
   { key: 'dune', core: true, c: 'blue', title: 'Dunes and wave run-up', tag: '✓ always on',
     tex: String.raw`\begin{gathered}TWL = \eta + \eta_T + S + R_2\\ R_2 \approx 1.1\sqrt{H_0L_0}\,\big(0.35\,\beta_f\;+\\ \tfrac12\sqrt{0.563\,\beta_f^2+0.004}\,\big)\\ \frac{dx_d}{dt} = \frac{4C_s\left(TWL-z_t\right)_+^2}{T\,(z_c-z_t)}\end{gathered}`,
     text: 'Waves run up the beach past the waterline (\\(R_2\\), Stockdon et al. 2006). When the total water level climbs above the dune toe \\(z_t\\), waves bite into the dune (Larson et al. 2004; \\(C_s\\) fit to Camp Ellis). A wide beach lifts the toe higher, so it protects the dune. Once the dune is gone, waves wash over onto the road and houses. Between storms, wind slowly rebuilds the dune.',
@@ -1283,32 +1591,32 @@ const TERMS = [
     text: 'For small angles the drift equation turns into the heat equation (Pelnard-Considère, 1956). A bump of sand spreads out along the shore the way heat spreads along a metal bar.',
     live: [['\\(\\varepsilon\\)', 'eps'], ['A 500 m bump spreads in', 'tspread']] },
   { key: 'groin', c: 'orange', title: 'Groins, spurs and jetties', tag: 'from your structures',
-    tex: String.raw`\begin{gathered}Q(x_g) = \mathrm{BYP}\cdot Q\\ \mathrm{BYP} = 1-\frac{y_G}{y_B},\qquad y_B = \left(\frac{h_b}{A}\right)^{3/2}\end{gathered}`,
-    text: 'A groin blocks the part of the surf zone it reaches, so sand piles up on the updrift side and the downdrift side starves. \\(y_G\\) is how far it sticks out past the shoreline and \\(y_B\\) is the surf-zone width. Once sand reaches the tip, it bypasses. Waves are also calmer in its lee (Bakker, 1968). Long jetties and headlands reflect waves too, making them up to 25% bigger just updrift. A headland is a giant natural groin: \\(\\mathrm{BYP}=0\\).',
+    tex: String.raw`\begin{gathered}Q_i(x_g) = \mathrm{BYP}_i\,Q_i,\qquad y_B = \left(\frac{h_b}{A}\right)^{3/2}\\ \mathrm{BYP}_1 = 1-\frac{\min(y_G,\,w)}{w}\\ \mathrm{BYP}_2 = 1-\frac{(y_G-w)_+}{y_B-w}\end{gathered}`,
+    text: 'A groin blocks the part of the surf zone it reaches, so sand piles up on the updrift side and the downdrift side starves. \\(y_G\\) is how far it sticks out past the shoreline, \\(y_B\\) is the surf-zone width and \\(w\\) the part of it inside line 2. A short groin blocks only line 1; a long one blocks both lines. Once the beach reaches the tip, sand bypasses. Waves are also calmer in its lee (Bakker, 1968). Long jetties and headlands reflect waves too, making them up to 25% bigger just updrift. A headland is a giant natural groin: \\(\\mathrm{BYP}=0\\).',
     live: [['Bypassing', 'byp']], lock: 'Add a groin, spur, jetty or headland' },
-  { key: 'breakwater', c: 'purple', title: 'Breakwater shadow', tag: 'from your structures',
+  { key: 'breakwater', c: 'purple', title: 'Breakwater and island shadow', tag: 'from your structures',
     tex: String.raw`\begin{gathered}Q = \left(H_b^2C_g\right)_b\big[a_1\sin2(\theta_b-\phi)\\ \qquad -\,a_2\cos(\theta_b-\phi)\,\frac{\partial H_b}{\partial x}\big]\\ H_b \to K_d\,H_b\ \text{(in its shadow)}\end{gathered}`,
     text: 'Behind a breakwater the waves are smaller (\\(K_d \\lt 1\\)) because they only reach it by bending around the ends (diffraction). Sand flows from where waves are big to where they are small, building a bulge called a salient. If it reaches the breakwater it becomes a tombolo.',
-    live: [['Smallest \\(K_d\\) on shore', 'kd'], ['Shape', 'salient']], lock: 'Add a breakwater or T-groin' },
+    live: [['Smallest \\(K_d\\) on shore', 'kd'], ['Shape', 'salient']], lock: 'Add a breakwater, T-groin, spur or island' },
   { key: 'seawall', c: 'slate', title: 'Seawall', tag: 'from your structures',
     tex: String.raw`y(x,t) \ge y_w`,
     text: 'A seawall stops the shoreline from moving landward, but it does not stop sand from leaving. The beach in front narrows and can disappear. This is called coastal squeeze.',
     live: [['Wall with no dry beach', 'wallbare']], lock: 'Add a seawall' },
   { key: 'grass', c: 'grass', title: 'Dune grass', tag: 'from your planting',
-    tex: String.raw`\begin{gathered}k_v = (1-\beta)\,k \ \text{(erosion)}\\ k_v = (1+\gamma)\,k \ \text{(recovery)}\\ m_d = 0.6\ \text{(dune cut)}\\ \beta = 0.4,\quad \gamma = 0.3\end{gathered}`,
-    text: 'Beach grass roots bind the dune and its stems trap blowing sand. On planted stretches, storms pull sand off the beach and cut the dune more slowly, and both rebuild faster afterwards. Grass does not stop sand drifting along the shore, and it dies where the sea reaches the dune.',
-    live: [['Planted', 'grassLen'], ['Still growing', 'grassOk']], lock: 'Plant dune grass' },
+    tex: String.raw`\begin{gathered}K_v = (1-\beta)\,K \ \text{(erosion)}\\ K_v = (1+\gamma)\,K \ \text{(recovery)}\\ m_d = 0.6\ \text{(dune cut)}\\ \beta = 0.4,\quad \gamma = 0.3\\ \text{foredune: } \frac{dx_d}{dt} = -1.5\ \mathrm{m/yr}\ \text{under the grass}\end{gathered}`,
+    text: 'Beach grass roots bind the dune and its stems trap blowing sand. On planted stretches, storms pull sand off the beach and cut the dune more slowly, and both rebuild faster afterwards. New plantings are sparse and fill in over a few years. The grass spreads about 2 m a year along the beach and 1.5 m a year toward the water while the dry beach is wide, and the sand it traps builds a new foredune under it (up to 25 m out), though plovers lose that open sand. Grass does not stop sand drifting along the shore, and it dies where the sea reaches the dune.',
+    live: [['Planted', 'grassLen'], ['Cover', 'grassCover'], ['Still growing', 'grassOk'], ['New foredune', 'grassSpread']], lock: 'Plant dune grass' },
   { key: 'river', c: 'green', title: 'River sand supply', tag: 'from your rivers',
     tex: String.raw`q(x,t) = Q_r\,\delta(x-x_r)`,
     text: 'A river delivers new sand at one point along the shore. The drift then spreads it out, so beaches downdrift of a river mouth are fed. Use the River sand slider to see what happens when a river brings more sand, or less (for example after a dam traps it upstream).',
     live: [['Supply', 'qr']], lock: 'Add a river' },
   { key: 'fill', c: 'green', title: 'Beach nourishment', tag: 'from your fills',
     tex: String.raw`q(x,t) = \frac{V}{\sqrt{2\pi}\,\sigma}\,e^{-(x-x_n)^2/2\sigma^2}\,\delta(t-t_n)`,
-    text: 'Trucks or dredges add a volume \\(V\\) of sand in one go. The bump then spreads along the shore (the heat equation again), feeding the neighbours and slowly flattening out.',
+    text: 'Trucks or dredges add a volume \\(V\\) of sand in one go. The bump then spreads along the shore (the heat equation again), feeding the neighbours and slowly flattening out. Sand dumped offshore forms a mound that shallows the water (so waves refract over it) and is pushed shoreward at a speed \\(u \\approx 150\\,H_b\\,(1 - h/h_*)\\) m/yr until it joins line 2; below the closure depth \\(h_*\\) it never moves.',
     live: [['Fills', 'nfill'], ['Total added', 'vfill']], lock: 'Add sand' },
   { key: 'storm', c: 'amber', title: 'Storm surge', tag: 'from your storms',
-    tex: String.raw`y_{eq} = -W\,\frac{0.068H_b + S}{B+1.28H_b}`,
-    text: 'During a storm the water rises by the surge \\(S\\) and the waves are huge, so the equilibrium beach sits far landward. The beach races toward it for a few days, then slowly recovers as sand comes back from the bar.',
+    tex: String.raw`W_{eq} = W_0 + W'\,\frac{0.068H_b + S}{B+1.28H_b}`,
+    text: 'During a storm the water rises by the surge \\(S\\) and the waves are huge, so the two lines want to be much further apart: sand races from the beach out to line 2 for a few days, building a bar, then slowly comes back.',
     live: [['Surge \\(S\\)', 'surge'], ['Storms so far', 'nstorm']], lock: 'Send a storm' },
   { key: 'tide', c: 'navy', title: 'Tides and storm timing', tag: 'from your storms',
     tex: String.raw`\eta_T(t) = A\cos\frac{2\pi\,(t-t_{HW})}{12.42\ \mathrm{h}}`,
@@ -1319,7 +1627,7 @@ const TERMS = [
     text: 'A rocky headland blocks waves coming from its side: in its shadow (\\(S_h \\to 1\\)) the waves are small and the beach is calm, and no sand gets around it (\\(\\mathrm{BYP}=0\\)). Waves that hit a headland or long jetty bounce back and add to the incoming waves, so the beach within about 200 m updrift (distance \\(d\\)) gets bigger waves and erodes faster, as beside the Camp Ellis jetty.',
     live: [['Headlands', 'nhead'], ['Biggest wave boost', 'kmax'], ['Calmest spot', 'kd']], lock: 'Add a headland or a jetty' },
   { key: 'slr', c: 'teal', title: 'Sea-level rise (Bruun rule)', tag: 'from the sea-level slider',
-    tex: String.raw`\frac{\partial y_s}{\partial t} \mathrel{+}= -\frac{W_*}{h_*+B}\,\frac{d\eta}{dt}`,
+    tex: String.raw`\frac{\partial y_{1,2}}{\partial t} \mathrel{+}= -\frac{W_*}{h_*+B}\,\frac{d\eta}{dt}`,
     text: 'As the sea rises, the whole beach profile shifts up and landward to keep its shape. Each millimetre of rise moves the shoreline back by \\(W_*/(h_*+B)\\) millimetres, often 50 to 100 times more.',
     live: [['Rise rate', 'slrr'], ['Retreat', 'slrret'], ['Total rise', 'eta']], lock: 'Raise the sea level' }
 ];
@@ -1379,14 +1687,18 @@ function updateLive() {
   const stems = S.structures.filter(isStem);
   let kdMin = 1; for (let i = 0; i < N; i++) kdMin = Math.min(kdMin, Kd[i] || 1);
   let shape = '—';
-  for (const s of S.structures) if (s.type === 'breakwater' || s.type === 'tgroin') {
-    const yb = s.type === 'breakwater' ? s.y : s.tip, xm = s.type === 'breakwater' ? (s.x1 + s.x2) / 2 : s.x;
+  for (const s of S.structures) if (s.type === 'breakwater' || s.type === 'tgroin' || s.type === 'spur' || s.type === 'island') {
+    const yb = s.type === 'breakwater' ? s.y : s.type === 'island' ? islandFront(s, s.x) : s.tip, xm = s.type === 'breakwater' ? (s.x1 + s.x2) / 2 : headSpan(s) ? (headSpan(s)[0] + headSpan(s)[1]) / 2 : s.x;
     const gap = yb - shoreAt(xm); shape = gap < 8 ? 'tombolo (joined)' : `salient, ${gap.toFixed(0)} m gap`;
   }
   let bare = 0; for (const s of S.structures) if (s.type === 'seawall') for (let i = s.i1; i <= s.i2; i++) if (y[i] - s.y < 3) bare += DX;
-  let yeqAvg = 0, ycAvg = 0; for (let i = 0; i < N; i++) { const Hl = Hc[i] || w.Hb; yeqAvg += -W_CS * (0.068 * Hl + w.surge) / (BERM + 1.28 * Hl); ycAvg += S.ycs[i]; }
+  let yeqAvg = 0, ycAvg = 0; for (let i = 0; i < N; i++) { const Hl = Hc[i] || w.Hb; yeqAvg += weqAt(Hl, w.surge + (S.storm ? w.tide : 0)); ycAvg += S.y2[i] - S.yls[i]; }
   const vals = {
-    D: `${Dd.toFixed(1)} m`, len: '1,500 m', Qmid: fmtQ(Qm), a1: a1f().toFixed(4),
+    D: `${Dd.toFixed(1)} m`, h1: `${H1().toFixed(1)} m`, D12: `${D1f().toFixed(1)} m, ${D2f().toFixed(1)} m`, len: '1,500 m',
+    fshare: (() => { let f = 0; for (let j = 1; j < N; j++) f += FR[j]; return `${Math.round(f / (N - 1) * 100)}%`; })(),
+    thRange: WF.ok ? (() => { let lo = 1e9, hi = -1e9; for (let i = 2; i < N - 2; i++) { const v = WF.th[i] * 180 / Math.PI; lo = Math.min(lo, v); hi = Math.max(hi, v); } return `${lo.toFixed(1)}° to ${hi.toFixed(1)}°`; })() : '—',
+    grassSpread: (() => { let m = 0; for (let i = 0; i < N; i++) m = Math.max(m, -S.dune[i]); return m > 0.5 ? `up to ${m.toFixed(0)} m` : 'not yet'; })(),
+    grassCover: (() => { const g = S.structures.filter(t => t.type === 'grass'); return g.length ? `${Math.round(g.reduce((a, t) => a + grassDensity(t), 0) / g.length * 100)}%` : '—'; })(), Qmid: fmtQ(Qm), a1: a1f().toFixed(4),
     H0: `${w.H0.toFixed(2)} m`, Hb: `${w.Hb.toFixed(2)} m`, ang: `${Math.abs(w.thDeg).toFixed(0)}° → ${Math.abs(w.thb * 180 / Math.PI).toFixed(1)}°`,
     yB: `${Math.pow(w.hb / A, 1.5).toFixed(0)} m`, yeq: `${(yeqAvg / N).toFixed(1)} m`, yc: `${(ycAvg / N).toFixed(1)} m`,
     eps: `${fmtVol(eps)} m²/yr`, tspread: eps > 1 ? `${(500 * 500 / (4 * eps) * 12).toFixed(1)} months` : '—',
@@ -1455,7 +1767,7 @@ function updateReadouts() {
   const chicks = Math.round(S.fledged);
   $('stNestsS').textContent = !nn ? 'add a nesting area' : `${inSeason() ? 'Nesting now' : 'Off season'} · ${chicks} chick${chicks === 1 ? '' : 's'} fledged` + (nWash ? ` · ${nWash} washed out` : '') + (nLost ? ` · ${nLost} lost` : '');
   $('stNestBox').className = 'stat' + (nn && (nRisk || nLost || nWash) ? ' bad' : '');
-  let tomb = 0; for (const s of S.structures) if (s.type === 'breakwater') { const xm = (s.x1 + s.x2) / 2; if (s.y - shoreAt(xm) < 8) tomb++; }
+  let tomb = 0; for (const s of S.structures) { if (s.type === 'breakwater') { const xm = (s.x1 + s.x2) / 2; if (s.y - shoreAt(xm) < 8) tomb++; } if (s.type === 'island' && islandFront(s, s.x) - shoreAt(s.x) < 8) tomb++; }
   if (S.playing && S.alert) {
     if (nLost > S.alert.nLost) toast('🪹 A nesting area just lost its beach.');
     if (tomb > S.alert.tomb) toast('🏝️ Tombolo! The beach has joined the breakwater.');
@@ -1466,14 +1778,28 @@ function updateReadouts() {
 // ---------- main loop ----------
 let last = performance.now(), lastUI = 0, wavePhase = 0;
 function frame(now) {
-  const dtReal = Math.min(0.05, (now - last) / 1000); last = now;
+  requestAnimationFrame(frame);          // keep the loop alive even if one frame hits a problem
+  const dtReal = Math.min(0.05, Math.max(0, (now - last) / 1000)); last = now;
   wavePhase += (W ? W.om : 0.75) * dtReal * 2.2; // accumulate, so a change in period never makes the crests jump or race
+  if (!WF.ok) computeWaveField(W || currentWaves());
+  else if (!WF.job && now - WF.tStart > 250) { WF.tStart = now; WF.job = fieldJob(W || currentWaves()); }
+  if (WF.job && WF.job.next().done) WF.job = null;
   if (S.playing) { advance(dtReal); moveParticles(dtReal); nestSeasonTick(W); checkHouses(); }
   const tSec = now / 1000;
   draw(tSec);
   if (now - lastUI > 200) { lastUI = now; updateReadouts(); updateLive(); drawChart(); }
-  requestAnimationFrame(frame);
 }
+
+// ---------- collapsible math section ----------
+function setMathOpen(open, save) {
+  const btn = $('mathToggle'), body = $('mathBody');
+  body.hidden = !open; btn.setAttribute('aria-expanded', open); $('math').classList.toggle('collapsed', !open);
+  btn.querySelector('.lbl').textContent = open ? 'Hide the math' : 'Show the math';
+  if (open) { renderMaster(masterSrc); typeset([$('termsCore'), $('termsExtra'), document.querySelector('.glossary')]); }
+  if (save) { try { localStorage.setItem('shoreline-math', open ? 'open' : 'closed'); } catch (e) {} }
+}
+$('mathToggle').addEventListener('click', () => setMathOpen($('mathBody').hidden, true));
+(function () { let v = null; try { v = localStorage.getItem('shoreline-math'); } catch (e) {} if (v === 'closed') setMathOpen(false, false); })();
 
 // ---------- light / dark ----------
 function applyTheme(t, save) {
