@@ -538,7 +538,7 @@ function drawCrests(w, time) {
 // sand particles in the surf zone
 const PARTS = Array.from({ length: 240 }, (_, i) => ({ x: Math.random() * XL, f: Math.random(), j: Math.random() }));
 const stemHalf = s => (s.type === 'headland' ? 45 : s.type === 'jetty' ? 10 : 6) + 3; // half-width of the rock, plus a small gap
-function particleFree(x) { return !S.structures.some(s => isStem(s) && Math.abs(x - s.x) < stemHalf(s)); }
+function particleFree(x) { return !S.structures.some(s => (isStem(s) && Math.abs(x - s.x) < stemHalf(s)) || (s.type === 'river' && Math.abs(x - s.x) < s.w / 2 + 2)); }
 function respawn(p) { let k = 0; do { p.x = Math.random() * XL; } while (!particleFree(p.x) && ++k < 20); p.f = Math.random(); p.stuck = 0; }
 function scatterParticles() { for (const p of PARTS) { respawn(p); p.j = Math.random(); } } // spread the sand grains evenly again
 function faceQ(X) { const j = clamp(Math.round(X / DX), 0, N); return Q[j]; }
@@ -673,13 +673,25 @@ function draw(time) {
   for (const s of S.structures) if (s.type === 'river') drawRiver(s, time);
   if (S.storm) drawStormWater(w, time);
   ctx.restore();
+  for (const s of S.structures) if (s.type === 'river') drawRiverMouth(s, time);
   // erosion scarp where the sea has cut into the dune or beyond
   ctx.strokeStyle = '#7a5c3a'; ctx.lineWidth = 2.2; ctx.beginPath(); let pen = false;
   for (let X = 0; X <= XL; X += 5) { const Y = shoreAt(X); if (Y < DUNE_TOE + 3) { pen ? ctx.lineTo(px(X), py(Y)) : ctx.moveTo(px(X), py(Y)); pen = true; } else pen = false; }
   ctx.stroke();
   // initial shoreline ghost
   ctx.strokeStyle = 'rgba(15, 40, 55, 0.55)'; ctx.setLineDash([5, 5]); ctx.lineWidth = 1.2;
-  ctx.beginPath(); for (let i = 0; i < N; i++) { const X = (i + 0.5) * DX; i ? ctx.lineTo(px(X), py(S.y0[i])) : (ctx.moveTo(0, py(S.y0[0])), ctx.lineTo(px(X), py(S.y0[i]))); } ctx.lineTo(CW, py(S.y0[N - 1])); ctx.stroke(); ctx.setLineDash([]);
+  { const mouths = S.structures.filter(r => r.type === 'river'), inMouth = X => mouths.some(r => Math.abs(X - r.x) < r.w / 2);   // no ghost line across river mouths
+  ctx.beginPath(); let on = false;
+  for (let X = 0; X <= XL; X += 5) { const Y = py(S.y0[cellOf(X)]); if (inMouth(X)) { on = false; continue; } on ? ctx.lineTo(px(X), Y) : ctx.moveTo(px(X), Y); on = true; }
+  ctx.stroke(); ctx.setLineDash([]); }
+  // sand grains in the surf zone: drawn under the structures, and never over a river mouth (the river carries them out)
+  ctx.fillStyle = 'rgba(250, 232, 180, 0.95)';
+  const mouths = S.structures.filter(r => r.type === 'river');
+  for (const p of PARTS) {
+    if (mouths.some(r => Math.abs(p.x - r.x) < r.w / 2 + 2)) continue;
+    const sh = shoreAt(p.x), yb = surfW(p.x), Y = sh + 3 + p.f * Math.max(4, yb - 3);
+    ctx.beginPath(); ctx.arc(px(p.x), py(Y), Math.max(1.3, 2.2 * sc), 0, 7); ctx.fill();
+  }
   // structures
   for (const s of S.structures) {
     if (s.type === 'seawall') {
@@ -694,12 +706,6 @@ function draw(time) {
       drawRocks(s.x, STEM_ROOT, s.x, s.tip, s.type === 'jetty' ? 18 : 10, s.id);
       const hsp = headSpan(s); if (hsp) drawRocks(hsp[0], s.tip, hsp[1], s.tip, 11, s.id + 99);
     }
-  }
-  // particles
-  ctx.fillStyle = 'rgba(250, 232, 180, 0.95)';
-  for (const p of PARTS) {
-    const sh = shoreAt(p.x), yb = surfW(p.x), Y = sh + 3 + p.f * Math.max(4, yb - 3);
-    ctx.beginPath(); ctx.arc(px(p.x), py(Y), Math.max(1.3, 2.2 * sc), 0, 7); ctx.fill();
   }
   // draft preview
   if (draft) drawDraft();
@@ -897,6 +903,19 @@ function drawRiver(s, time) {
   ctx.strokeStyle = 'rgba(255, 230, 140, 0.8)'; ctx.setLineDash([8, 8]); ctx.lineWidth = 1;
   ctx.lineDashOffset = rx1; // keep the centre-line dashes in step with the rest of the road
   ctx.beginPath(); ctx.moveTo(rx1, py(6)); ctx.lineTo(rx2, py(6)); ctx.stroke(); ctx.setLineDash([]); ctx.lineDashOffset = 0;
+}
+// the river mouth: open water right across the channel (no beach, no swash line), with a muddy plume fading out to sea
+function drawRiverMouth(s, time) {
+  const x1 = s.x - s.w / 2, x2 = s.x + s.w / 2;
+  let lo = 1e9, hi = -1e9;
+  for (let X = x1; X <= x2 + 0.1; X += 5) { const Y = shoreAt(X); lo = Math.min(lo, Y); hi = Math.max(hi, Y); }
+  const top = hi + 6, a = px(x1), b = px(x2);
+  ctx.fillStyle = '#3f8fb2'; ctx.fillRect(a, py(top), b - a, py(Math.max(DUNE_TOE, lo - 12)) - py(top));
+  const plume = 18 + s.w * 0.35, g = ctx.createLinearGradient(0, py(top), 0, py(top + plume));
+  g.addColorStop(0, 'rgba(63,143,178,1)'); g.addColorStop(0.35, 'rgba(92,140,140,0.55)'); g.addColorStop(1, 'rgba(92,140,140,0)');
+  ctx.fillStyle = g; ctx.fillRect(a, py(top + plume), b - a, py(top) - py(top + plume));
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1; ctx.setLineDash([6, 10]); ctx.lineDashOffset = -time * 12;
+  ctx.beginPath(); ctx.moveTo(px(s.x), py(Math.max(DUNE_TOE, lo - 12))); ctx.lineTo(px(s.x), py(top + plume * 0.5)); ctx.stroke(); ctx.setLineDash([]); ctx.lineDashOffset = 0;
 }
 function drawDraft() {
   const d = draft; ctx.globalAlpha = 0.75;
@@ -1189,19 +1208,20 @@ const toolbar = document.getElementById('toolbar'), toolHint = document.getEleme
 // tools are grouped; the ones marked x appear only in Explorer mode
 const TOOL_GROUPS = [
   ['Basics', ['inspect', 'erase', 'build']],
-  ['Rock walls', ['groin', 'tgroin', 'spur', 'jetty', 'breakwater', 'seawall', 'headland']],
+  ['Hard fixes', ['groin', 'tgroin', 'spur', 'jetty', 'breakwater', 'seawall', 'headland']],
   ['Soft fixes', ['nourish', 'grass']],
   ['Nature', ['river', 'island', 'nest']]
 ];
-const EXPLORER_TOOLS = new Set(['tgroin', 'spur', 'headland', 'river', 'island', 'build']);
+const EXPLORER_TOOLS = new Set(['tgroin', 'spur', 'headland', 'river', 'island']);
 TOOL_GROUPS.forEach(([name, ids]) => {
   const row = document.createElement('div'); row.className = 'tool-group' + (ids.every(id => EXPLORER_TOOLS.has(id)) ? ' x-only' : '');
-  row.innerHTML = `<span class="tg-label">${name}</span>`;
+  row.innerHTML = `<span class="tg-label">${name}</span><div class="tg-btns"></div>`;
+  const btns = row.querySelector('.tg-btns');
   for (const id of ids) {
     const t = TOOLS.find(x => x.id === id); if (!t) continue;
     const b = document.createElement('button'); b.className = 'tool' + (EXPLORER_TOOLS.has(id) ? ' x-only' : ''); b.type = 'button'; b.dataset.tool = t.id;
     b.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${t.svg}</svg>${t.label}`;
-    b.addEventListener('click', () => setTool(t.id)); row.appendChild(b);
+    b.addEventListener('click', () => setTool(t.id)); btns.appendChild(b);
   }
   toolbar.appendChild(row);
 });
@@ -1418,11 +1438,11 @@ function setMode(m) {
   S.mode = m;
   $('modeSeg').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', b.dataset.mode === m));
   const notes = {
-    cycle: 'Waves change month by month: winter swell from the east–northeast, calmer summer swell from the south–southeast.',
-    winter: 'Holding winter: bigger waves from the east–northeast, all year round. The calendar keeps running (plovers still nest in summer); only the waves are held.',
-    spring: 'Holding spring: moderate waves from the east, all year round. The calendar keeps running; only the waves are held.',
-    summer: 'Holding summer: small waves from the south–southeast, all year round. The calendar keeps running; only the waves are held.',
-    fall: 'Holding fall: moderate waves, turning from southeast to east, all year round. The calendar keeps running; only the waves are held.',
+    cycle: 'Waves change with the months: big from the ENE in winter, small from the SSE in summer.',
+    winter: 'Winter waves all year: big, from the ENE. The calendar still runs.',
+    spring: 'Spring waves all year: moderate, from the east. The calendar still runs.',
+    summer: 'Summer waves all year: small, from the SSE. The calendar still runs.',
+    fall: 'Fall waves all year: moderate, from the SE to E. The calendar still runs.',
     custom: 'Your own waves: set the direction, height and period below.'
   };
   $('modeNote').textContent = notes[m];
@@ -1447,12 +1467,6 @@ $('rw').addEventListener('input', () => {
   const last = [...S.structures].reverse().find(s => s.type === 'river');
   if (last) { last.w = S.riverW; refreshTerms(true); }
 });
-$('btnRebuild').addEventListener('click', () => {
-  const gone = S.houses.filter(h => h.gone && houseVisible(h));
-  if (!gone.length) { toast('🏡 All the houses are standing.'); return; }
-  const done = gone.filter(h => rebuild(h, true)).length;
-  toast(done === gone.length ? `🔨 Rebuilt ${done} house${done > 1 ? 's' : ''}!` : done ? `🔨 Rebuilt ${done}; ${gone.length - done} still have too little beach.` : '🚫 Not enough beach to rebuild safely. Add sand first!');
-});
 k1.addEventListener('input', () => { S.K1 = +k1.value; });
 d50.addEventListener('input', () => { S.d50 = +d50.value; });
 hsIn.addEventListener('input', () => { S.hstar = +hsIn.value; });
@@ -1470,8 +1484,13 @@ function speedLabel(sp) {
   if (sp < 0.95) { const s = 1 / sp; return `1 year every ${s >= 10 ? Math.round(s) : s.toFixed(1)} s`; }
   return `${sp < 1.05 ? '1 year' : sp.toFixed(1) + ' years'} per second`;
 }
-function setSpeed(sp) { S.speed = sp; $('speed').value = spTo(sp); $('speedo').textContent = speedLabel(sp); $('speed').setAttribute('aria-valuetext', speedLabel(sp)); }
-$('speed').addEventListener('input', () => { S.speed = spFrom(+$('speed').value); $('speedo').textContent = speedLabel(S.speed); $('speed').setAttribute('aria-valuetext', speedLabel(S.speed)); });
+const SPEED_STEPS = [1 / 30, 1 / 15, 1 / 8, 1 / 4, 1 / 2, 1, 2];   // years per second
+function setSpeed(sp) { S.speed = sp; if (HIST.ready) histUI(); else $('speedo').textContent = 'Speed: ' + speedLabel(sp); }
+function nextSpeed() {
+  const k = SPEED_STEPS.findIndex(v => v > S.speed * 1.01);
+  setSpeed(k < 0 ? SPEED_STEPS[0] : SPEED_STEPS[k]);
+  toast(k < 0 ? `Back to the slowest speed: ${speedLabel(S.speed)}` : `Faster: ${speedLabel(S.speed)}`);
+}
 function setPlaying(v) {
   if (v && !S.playing && S.t === 0) toast('🏁 And we\'re off!');
   S.playing = v;
@@ -1481,8 +1500,13 @@ function setPlaying(v) {
 }
 $('btnStart').addEventListener('click', () => setPlaying(true));
 $('btnPause').addEventListener('click', () => setPlaying(false));
-$('btnUndo').addEventListener('click', () => { S.structures.pop(); scatterParticles(); refreshTerms(); });
-$('btnClear').addEventListener('click', () => { S.structures = []; scatterParticles(); refreshTerms(); });
+// Undo and Remove all live in the Basics row of the Build box
+(function () {
+  const row = toolbar.querySelector('.tool-group .tg-btns'); if (!row) return;
+  const mk = (id, txt, title, fn, first) => { const b = document.createElement('button'); b.type = 'button'; b.id = id; b.className = 'btn tool-act' + (first ? ' first' : ''); b.textContent = txt; b.title = title; b.addEventListener('click', fn); row.appendChild(b); };
+  mk('btnUndo', '↩️ Undo', 'Remove the last thing you built', () => { S.structures.pop(); scatterParticles(); refreshTerms(); }, true);
+  mk('btnClear', '🧹 Remove all', 'Remove every structure', () => { S.structures = []; scatterParticles(); refreshTerms(); });
+})();
 $('btnReset').addEventListener('click', () => { endChallenge(null); resetBeach(); refreshTerms(); });
 $('btnNoreaster').addEventListener('click', () => startStorm('noreaster'));
 $('btnTropical').addEventListener('click', () => startStorm('tropical'));
@@ -1946,20 +1970,32 @@ function histRestore(k) {
   HIST.at = k; HIST.last = sn.t;
   W = currentWaves(); WF.ok = false; WF.job = null; WF.prev = null; WF.tStart = -1e9;
   totals(); scatterParticles(); refreshTerms(); updateReadouts(); drawChart(); histUI();
-  if (k < HIST.snaps.length - 1) $('runStatus').innerHTML = '<b>Rewound.</b> Drag on to replay, or press Start to carry on from here (what happened later is replaced).';
+  if (k < HIST.snaps.length - 1) $('runStatus').innerHTML = '<b>Rewound.</b> Hold Fast-forward to replay, or press Start to carry on from here (what happened later is replaced).';
 }
 const clockText = t => `Year ${Math.floor(t)} · ${MONTHS[Math.floor(((START_MONTH + t * 12) % 12 + 12) % 12)]}`;
 function histUI() {
-  const row = $('rewindRow'), r = $('rewind'), n = HIST.snaps.length;
-  row.hidden = n < 2;
-  if (n < 2) return;
-  const k = HIST.at >= 0 ? HIST.at : n - 1;
-  r.max = n - 1; r.value = k; r.disabled = !!CHL.active;
-  row.title = CHL.active ? 'Rewind is off during a challenge' : '';
-  row.classList.toggle('past', k < n - 1);
-  $('rewindo').textContent = k < n - 1 ? `${clockText(HIST.snaps[k].t)} (of ${clockText(HIST.snaps[n - 1].t).replace('Year ', 'yr ')})` : 'now';
+  const n = HIST.snaps.length, k = HIST.at >= 0 ? HIST.at : n - 1, past = n > 1 && k < n - 1;
+  $('btnRew').disabled = !!CHL.active || n < 2 || k <= 0;
+  $('btnRew').title = CHL.active ? 'Rewind is off during a challenge' : n < 2 ? 'Press Start first: then you can rewind to see what happened' : 'Hold to go back through what happened since you pressed Start';
+  document.querySelector('.timebar').classList.toggle('past', past);
+  $('speedo').textContent = past ? `Rewound to ${clockText(HIST.snaps[k].t)} (now: ${clockText(HIST.snaps[n - 1].t).replace('Year ', 'yr ')})` : 'Speed: ' + speedLabel(S.speed);
 }
-$('rewind').addEventListener('input', e => { if (!CHL.active) histRestore(+e.target.value); });
+// hold a button to keep stepping; a quick click is one step
+function holdButton(btn, step) {
+  let timer = null, n = 0;
+  const stop = () => { clearTimeout(timer); timer = null; };
+  const go = () => { if (btn.disabled) return stop(); step(n++); timer = setTimeout(go, n < 3 ? 260 : 70); };
+  btn.addEventListener('pointerdown', e => { if (e.button) return; e.preventDefault(); try { btn.setPointerCapture(e.pointerId); } catch (er) {} n = 0; stop(); go(); });
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(ev => btn.addEventListener(ev, stop));
+  btn.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); step(0); } });
+}
+const histPos = () => HIST.at >= 0 ? HIST.at : HIST.snaps.length - 1;
+holdButton($('btnRew'), n => { if (CHL.active || HIST.snaps.length < 2) return; if (S.playing && HIST.at < 0) histRecord(true); histRestore(Math.max(0, histPos() - (n === 0 ? 2 : 1))); });
+holdButton($('btnFF'), n => {
+  const past = HIST.snaps.length > 1 && HIST.at >= 0 && HIST.at < HIST.snaps.length - 1;
+  if (past && !CHL.active) histRestore(Math.min(HIST.snaps.length - 1, HIST.at + (n === 0 ? 2 : 1)));
+  else if (n === 0) nextSpeed();
+});
 function frame(now) {
   requestAnimationFrame(frame);          // keep the loop alive even if one frame hits a problem
   const dtReal = Math.min(0.05, Math.max(0, (now - last) / 1000)); last = now;
@@ -2016,11 +2052,17 @@ function closeWelcome() {
 }
 $('welcomeX').addEventListener('click', closeWelcome);
 $('tourBtn').addEventListener('click', () => startTour());
+// the header's Tour button brings the checklist back (it hides for good once closed or finished) and starts the tour
+$('helpBtn').addEventListener('click', () => {
+  WEL.done = new Set(); WEL.on = true; $('welcome').hidden = false; stepsRender();
+  try { localStorage.removeItem('shoreline-welcome'); } catch (e) {}
+  startTour();
+});
 
 // ---------- "Show me around" tour ----------
 const TOUR = [
-  ['.timebar', '⏱️ Time', 'Start and pause the model here, and choose how fast the years go by.'],
-  ['.toolcol', '🧰 Build', 'Pick a tool, then click the beach or the water. Rock walls trap sand; soft fixes add sand or hold it in place. Hover with 🔍 Look to find out what anything is.'],
+  ['.timebar', '⏱️ Time', 'Start and pause the model here. Fast-forward speeds time up, and once it has run, hold Rewind to go back and see what happened.'],
+  ['.toolcol', '🧰 Build', 'Pick a tool, then click the beach or the water. Hard fixes (rock structures) trap sand; soft fixes add sand or hold it in place. Hover with 🔍 Look to find out what anything is.'],
   ['.places', '🗺️ Maine beaches', 'Load a real Maine beach, with its jetties, seawalls and rivers already built.'],
   ['#stage', '🌊 The beach', 'Waves roll in from the top. The sand line moves as waves carry sand along the shore, and the little houses, dunes and plover nests react.'],
   ['.chartbox', '📈 What changed', 'Green means the beach grew, orange means it eroded, lined up with the beach above.'],
@@ -2206,6 +2248,15 @@ if (window.ResizeObserver) { let lastH = ''; const ro = new ResizeObserver(() =>
 resetBeach();
 refreshTerms(); updateReadouts(); drawChart();
 if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) { /* waves still animate slowly; user can pause */ }
-HIST.ready = true;
+// the place description shows two lines; "more" opens the rest
+(function () {
+  const pb = $('placeBlurb'), more = $('blurbMore');
+  const check = () => { pb.classList.remove('open'); more.textContent = 'more ▸'; requestAnimationFrame(() => { more.hidden = pb.scrollHeight <= pb.clientHeight + 2; }); };
+  more.addEventListener('click', () => { const o = pb.classList.toggle('open'); more.textContent = o ? 'less ▴' : 'more ▸'; });
+  new MutationObserver(check).observe(pb, { childList: true, characterData: true, subtree: true });
+  window.addEventListener('resize', () => { if (!pb.classList.contains('open')) check(); });
+  check();
+})();
+HIST.ready = true; histUI();
 requestAnimationFrame(frame);
 })();

@@ -22,7 +22,7 @@
       <p>Explore shoreline evolution. Build groins, jetties and breakwaters on a 1.5&nbsp;km beach, choose the waves and the season, call in a storm, and watch where the sand goes. Everything you add changes the mathematical model below.</p>
     </div>
     <div class="head-side">
-      <div class="head-ctl"><div class="seg ui-seg" id="uiSeg" role="group" aria-label="How much to show"><button type="button" data-ui="simple" title="The main tools only">🙂 Simple</button><button type="button" data-ui="explorer" title="Every tool, the wave settings and the math">🔬 Explorer</button></div>
+      <div class="head-ctl"><button type="button" class="btn help-btn" id="helpBtn" title="Show the three-step checklist and take the tour again">New here? Take a Tour</button><div class="seg ui-seg" id="uiSeg" role="group" aria-label="How much to show"><button type="button" data-ui="simple" title="The main tools only">🙂 Simple</button><button type="button" data-ui="explorer" title="Every tool, the wave settings and the math">🔬 Explorer</button></div>
       <div class="seg theme-seg" id="themeSeg" role="group" aria-label="Colour theme">
         <button type="button" data-theme-set="light">☀️ Light</button>
         <button type="button" data-theme-set="dark">🌙 Dark</button>
@@ -34,26 +34,19 @@
 
   <div class="toprow">
     <section class="timebar" aria-labelledby="hTime">
-        <div class="tb-row">
-          <h2 id="hTime">⏱️ Time</h2>
+        <h2 id="hTime">⏱️ Time</h2>
+        <span class="run-status" id="runStatus" role="status"></span>
+        <div class="tb-row playrow">
           <button class="btn go" id="btnStart" type="button"><svg viewBox="0 0 14 14" aria-hidden="true"><path d="M3 1.5v11l9-5.5z" fill="currentColor"/></svg>Start model</button>
           <button class="btn stop" id="btnPause" type="button"><svg viewBox="0 0 14 14" aria-hidden="true"><rect x="2.5" y="1.5" width="3.2" height="11" rx="1" fill="currentColor"/><rect x="8.3" y="1.5" width="3.2" height="11" rx="1" fill="currentColor"/></svg>Pause model</button>
-          <span class="run-status" id="runStatus" role="status"></span>
         </div>
-        <div class="tb-row">
-          <label for="speed" class="tb-label">Speed</label>
-          <input type="range" id="speed" min="0" max="1000" step="1" aria-describedby="speedo">
-          <output id="speedo" for="speed" class="mono"></output>
+        <div class="tb-row transport">
+          <button class="btn" id="btnRew" type="button" title="Hold to go back through what happened since you pressed Start"><svg viewBox="0 0 16 14" aria-hidden="true"><path d="M8 1.5v11L1 7z M15 1.5v11L8 7z" fill="currentColor"/></svg>Rewind</button>
+          <button class="btn" id="btnFF" type="button" title="Speed up time (after the fastest speed it starts over at the slowest). After rewinding, hold to replay forward."><svg viewBox="0 0 16 14" aria-hidden="true"><path d="M1 1.5v11L8 7z M8 1.5v11L15 7z" fill="currentColor"/></svg>Fast-forward</button>
         </div>
-        <div class="tb-row" id="rewindRow" hidden>
-          <label for="rewind" class="tb-label" title="Drag back to replay what happened since you pressed Start">⏪ Rewind</label>
-          <input type="range" id="rewind" min="0" max="0" step="1" value="0" aria-describedby="rewindo">
-          <output id="rewindo" for="rewind" class="mono"></output>
-        </div>
+        <output id="speedo" class="mono" aria-live="polite"></output>
         <div class="tb-row btns">
-          <button class="btn" id="btnUndo" type="button">↩️ Undo last</button>
-          <button class="btn" id="btnClear" type="button">🧹 Remove all structures</button>
-          <button class="btn" id="btnReset" type="button">🔄 Reset beach and clock</button>
+          <button class="btn" id="btnReset" type="button"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.2 6.2A5.5 5.5 0 1 0 13.5 9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M14.6 1.8v5.1H9.5z" fill="currentColor"/></svg>Reset beach and clock</button>
         </div>
       </section>
     <section class="toolcol" aria-labelledby="hTools">
@@ -66,7 +59,6 @@
         <input type="range" id="rw" min="20" max="200" step="5"></div>
         <div class="tsl-wrap x-only"><label class="tsl" for="rq">🟫 River sand <output id="rqo" for="rq"></output></label>
         <input type="range" id="rq" min="0" max="120000" step="2000"></div>
-        <button class="btn" id="btnRebuild" type="button">🔨 Rebuild all houses</button>
       </div>
       <div class="tool-hint" id="toolHint"></div>
     </section>
@@ -76,6 +68,7 @@
         <div class="chips" id="placeChips" role="group" aria-label="Load a Maine beach"></div>
       </div>
       <p class="place-blurb" id="placeBlurb"></p>
+      <button type="button" class="blurb-more" id="blurbMore" hidden>more ▸</button>
     </section>
   </div>
 
@@ -153,7 +146,7 @@
 
       <section class="ctl" aria-labelledby="hWx">
         <h2 id="hWx">⛈️ Storms and sea level</h2>
-        <p class="sub">Storms raise the water (surge) and send big waves for a few days. The sim slows down so you can watch.</p>
+        <p class="sub">A few days of big waves and high water. Time slows down so you can watch.</p>
         <div class="btns">
           <button class="btn storm" id="btnNoreaster">🌬️ Send a nor'easter</button>
           <button class="btn storm trop" id="btnTropical">🌀 Send a tropical storm</button>
@@ -167,7 +160,7 @@
 
       <section class="ctl" aria-labelledby="hChal" id="challengeBox">
         <h2 id="hChal">🏆 Challenges</h2>
-        <p class="sub">Pick a goal and see if you can reach it. Each one loads a beach and runs the clock for you.</p>
+        <p class="sub">Pick a goal. Each one loads a beach and runs the clock.</p>
         <div class="chal-list" id="chalList"></div>
         <details class="exp-more x-only"><summary>🧪 Experiments</summary>
         <div class="exp">
