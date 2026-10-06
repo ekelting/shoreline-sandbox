@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="description" content="Build groins, jetties, headlands, breakwaters and dune grass on a sandy beach or a real Maine beach, choose the waves and seasons, time storms with the tide, watch dunes erode and waves wash over the road, protect shorebird nests, and see the math change as you go.">
 <title>Shoreline Sandbox</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏖️</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -21,11 +22,12 @@
       <p>Explore shoreline evolution. Build groins, jetties and breakwaters on a 1.5&nbsp;km beach, choose the waves and the season, call in a storm, and watch where the sand goes. Everything you add changes the mathematical model below.</p>
     </div>
     <div class="head-side">
+      <div class="head-ctl"><div class="seg ui-seg" id="uiSeg" role="group" aria-label="How much to show"><button type="button" data-ui="simple" title="The main tools only">🙂 Simple</button><button type="button" data-ui="explorer" title="Every tool, the wave settings and the math">🔬 Explorer</button></div>
       <div class="seg theme-seg" id="themeSeg" role="group" aria-label="Colour theme">
         <button type="button" data-theme-set="light">☀️ Light</button>
         <button type="button" data-theme-set="dark">🌙 Dark</button>
         <button type="button" data-theme-set="auto">🖥️ Auto</button>
-      </div>
+      </div></div>
     <p class="frame-note" id="frameNote">Picture the beach facing east, like Saco Bay: north is to the left, south to the right, open ocean at the top.</p>
     </div>
   </header>
@@ -43,6 +45,11 @@
           <input type="range" id="speed" min="0" max="1000" step="1" aria-describedby="speedo">
           <output id="speedo" for="speed" class="mono"></output>
         </div>
+        <div class="tb-row" id="rewindRow" hidden>
+          <label for="rewind" class="tb-label" title="Drag back to replay what happened since you pressed Start">⏪ Rewind</label>
+          <input type="range" id="rewind" min="0" max="0" step="1" value="0" aria-describedby="rewindo">
+          <output id="rewindo" for="rewind" class="mono"></output>
+        </div>
         <div class="tb-row btns">
           <button class="btn" id="btnUndo" type="button">↩️ Undo last</button>
           <button class="btn" id="btnClear" type="button">🧹 Remove all structures</button>
@@ -55,9 +62,9 @@
       <div class="tool-extras">
         <div class="tsl-wrap"><label class="tsl" for="vol">🚚 Sand fill size <output id="volo" for="vol"></output></label>
         <input type="range" id="vol" min="50000" max="500000" step="25000"></div>
-        <div class="tsl-wrap"><label class="tsl" for="rw">🏞️ River width <output id="rwo" for="rw"></output></label>
+        <div class="tsl-wrap x-only"><label class="tsl" for="rw">🏞️ River width <output id="rwo" for="rw"></output></label>
         <input type="range" id="rw" min="20" max="200" step="5"></div>
-        <div class="tsl-wrap"><label class="tsl" for="rq">🟫 River sand <output id="rqo" for="rq"></output></label>
+        <div class="tsl-wrap x-only"><label class="tsl" for="rq">🟫 River sand <output id="rqo" for="rq"></output></label>
         <input type="range" id="rq" min="0" max="120000" step="2000"></div>
         <button class="btn" id="btnRebuild" type="button">🔨 Rebuild all houses</button>
       </div>
@@ -78,7 +85,10 @@
         <div class="ov ov-clock"><span class="pill mono" id="clock">Year 0 · Sep</span><span class="pill" id="waveTag">Year-round waves</span></div>
         <div class="ov ov-drift"><span class="pill" id="driftPill">Sand drift</span></div>
         <div class="ov ov-storm" id="stormBanner" hidden></div>
-        <div class="ov ov-hint" id="hint">🏖️ A straight, sandy beach and nothing on it yet.<br><b>Pick a tool from Build above, click the water or the sand, then press Start.</b></div>
+        <div class="ov ov-hint" id="hint">🏖️ A straight, sandy beach with nothing on it yet.<br><b>Try it: pick 🪨 Groin in Build, then click the sand here</b><br><span class="point" aria-hidden="true">👇</span></div>
+        <div class="ov ov-welcome" id="welcome" hidden><b>👋 New here?</b><ol><li data-step="place">① Pick a beach</li><li data-step="start">② Press Start</li><li data-step="storm">③ Send a storm</li></ol><button type="button" id="tourBtn">Show me around</button><button type="button" class="x" id="welcomeX" aria-label="Close the tips">✕</button></div>
+        <div class="ov ov-chal" id="chalBanner" hidden></div>
+        <div class="ov ov-modal" id="chalModal" hidden></div>
         <div class="ov ov-tip" id="tip" hidden></div>
         <div class="ov ov-toasts" id="toasts" aria-live="polite"></div>
       </div>
@@ -91,8 +101,8 @@
     </div>
     <div class="stats" id="stats">
         <div class="stat" id="stAvgBox"><div class="k">📏 Average change</div><div class="v" id="stAvg">0.0 m</div><div class="s">whole beach</div></div>
-        <div class="stat bad"><div class="k">🌊 Most erosion</div><div class="v" id="stWorst">0 m</div><div class="s" id="stWorstS">—</div></div>
-        <div class="stat good"><div class="k">🏖️ Most growth</div><div class="v" id="stBest">0 m</div><div class="s" id="stBestS">—</div></div>
+        <div class="stat bad x-only"><div class="k">🌊 Most erosion</div><div class="v" id="stWorst">0 m</div><div class="s" id="stWorstS">—</div></div>
+        <div class="stat good x-only"><div class="k">🏖️ Most growth</div><div class="v" id="stBest">0 m</div><div class="s" id="stBestS">—</div></div>
         <div class="stat" id="stTideBox"><div class="k">⛱️ High-tide beach</div><div class="v" id="stTide">0 m</div><div class="s" id="stTideS">dry sand at high tide</div></div>
         <div class="stat" id="stHouseBox"><div class="k">🏠 Houses at risk</div><div class="v" id="stHouses">0 / 15</div><div class="s" id="stHousesS">beach under 15 m wide</div></div>
         <div class="stat" id="stFloodBox"><div class="k">🌊 Floods</div><div class="v" id="stFloods">0</div><div class="s" id="stFloodsS">waves over the dune</div></div>
@@ -113,11 +123,11 @@
           </div>
           <div class="mode-row">
             <button data-mode="cycle" style="--sc:#2f78d6">🔁 Year-round</button>
-            <button data-mode="custom" style="--sc:#6a7680">🎛️ Custom</button>
+            <button data-mode="custom" class="x-only" style="--sc:#6a7680">🎛️ Custom</button>
           </div>
         </div>
         <p class="note" id="modeNote"></p>
-        <div class="dial-wrap">
+        <div class="dial-wrap x-only">
           <svg id="dial" viewBox="0 0 220 132" role="slider" tabindex="0" aria-label="Wave direction" aria-valuemin="-75" aria-valuemax="75">
             <rect class="sea" x="0" y="0" width="220" height="114" rx="10"/>
             <path class="arc" d="M 23.4 62 A 90 90 0 0 1 196.6 62"/>
@@ -137,8 +147,8 @@
             <div class="note" style="margin-top:4px">Drag the dot to choose where waves come from.</div>
           </div>
         </div>
-        <div class="row"><label for="h0">Wave height</label><input type="range" id="h0" min="0.2" max="3" step="0.05"><output id="h0o" for="h0"></output></div>
-        <div class="row"><label for="per">Wave period</label><input type="range" id="per" min="4" max="15" step="0.5"><output id="pero" for="per"></output></div>
+        <div class="row x-only"><label for="h0">Wave height</label><input type="range" id="h0" min="0.2" max="3" step="0.05"><output id="h0o" for="h0"></output></div>
+        <div class="row x-only"><label for="per">Wave period</label><input type="range" id="per" min="4" max="15" step="0.5"><output id="pero" for="per"></output></div>
       </section>
 
       <section class="ctl" aria-labelledby="hWx">
@@ -148,28 +158,32 @@
           <button class="btn storm" id="btnNoreaster">🌬️ Send a nor'easter</button>
           <button class="btn storm trop" id="btnTropical">🌀 Send a tropical storm</button>
         </div>
-        <div class="subrow"><span>Storm peaks at</span><div class="seg" id="timingSeg" role="group" aria-label="Storm timing"><button type="button" data-timing="high">🌕 High tide</button><button type="button" data-timing="random">🎲 Random</button><button type="button" data-timing="low">🌑 Low tide</button></div></div>
-        <div class="row"><label for="tide">Tide height</label><input type="range" id="tide" min="0" max="2.5" step="0.1"><output id="tideo" for="tide"></output></div>
-        <p class="note">Maine's tides rise and fall about 2.6&nbsp;m twice a day. The same storm can do much more damage when it peaks at high tide.</p>
+        <div class="subrow x-only"><span>Storm peaks at</span><div class="seg" id="timingSeg" role="group" aria-label="Storm timing"><button type="button" data-timing="high">🌕 High tide</button><button type="button" data-timing="random">🎲 Random</button><button type="button" data-timing="low">🌑 Low tide</button></div></div>
+        <div class="row x-only"><label for="tide">Tide height</label><input type="range" id="tide" min="0" max="2.5" step="0.1"><output id="tideo" for="tide"></output></div>
+        <p class="note x-only">Maine's tides rise and fall about 2.6&nbsp;m twice a day. The same storm can do much more damage when it peaks at high tide.</p>
         <div class="row"><label for="slr">Sea-level rise</label><input type="range" id="slr" min="0" max="20" step="0.5"><output id="slro" for="slr"></output></div>
-        <p class="note">Portland, Maine's tide gauge has recorded roughly 2&nbsp;mm/yr since 1912. Try 10–15&nbsp;mm/yr for late-century projections.</p>
+        <p class="note x-only">Portland, Maine's tide gauge has recorded roughly 2&nbsp;mm/yr since 1912. Try 10–15&nbsp;mm/yr for late-century projections.</p>
       </section>
 
-      <section class="ctl" aria-labelledby="hExp">
-        <h2 id="hExp">🧪 Try an experiment</h2>
+      <section class="ctl" aria-labelledby="hChal" id="challengeBox">
+        <h2 id="hChal">🏆 Challenges</h2>
+        <p class="sub">Pick a goal and see if you can reach it. Each one loads a beach and runs the clock for you.</p>
+        <div class="chal-list" id="chalList"></div>
+        <details class="exp-more x-only"><summary>🧪 Experiments</summary>
         <div class="exp">
           <button data-exp="groins"><b>🪨 Groin field in winter</b><span>Four groins, steady winter waves from the northeast. Sand piles against the north side of each one.</span></button>
           <button data-exp="jetty"><b>⚓ River-mouth jetty</b><span>A long jetty beside a river. Sand piles up on one side and the other side starves.</span></button>
           <button data-exp="salient"><b>🏝️ Breakwater salient</b><span>Waves straight on, breakwater offshore. The beach grows a bump toward it.</span></button>
           <button data-exp="squeeze"><b>🧱 Seawall squeeze</b><span>Fast sea-level rise against a seawall, downdrift of a groin. The dry beach disappears.</span></button>
         </div>
+        </details>
       </section>
 
-      <section class="ctl" aria-labelledby="hAdv">
+      <section class="ctl x-only" aria-labelledby="hAdv">
         <h2 id="hAdv">⚙️ Advanced settings</h2>
         <p class="sub">The Maine beach buttons fill these in for each place.</p>
         <div class="row"><label for="nrm">Beach faces</label><input type="range" id="nrm" min="0" max="359" step="1"><output id="nrmo" for="nrm"></output></div>
-        <div class="row"><label for="trn">Wave turning</label><input type="range" id="trn" min="-60" max="60" step="1"><output id="trno" for="trn"></output></div>
+        <div class="row"><label for="trn">Wave turning</label><input type="range" id="trn" min="-120" max="120" step="1"><output id="trno" for="trn"></output></div>
         <div class="row"><label for="expo">Wave exposure</label><input type="range" id="expo" min="0.2" max="1.5" step="0.05"><output id="expoo" for="expo"></output></div>
         <div class="row"><label for="k1">Sand mobility K₁</label><input type="range" id="k1" min="0.05" max="0.8" step="0.01"><output id="k1o" for="k1"></output></div>
         <div class="row"><label for="d50">Grain size</label><input type="range" id="d50" min="0.15" max="1" step="0.05"><output id="d50o" for="d50"></output></div>
@@ -178,13 +192,13 @@
       </section>
     </div>
 
-  <section class="mathsec" id="math" aria-labelledby="hMath">
+  <section class="mathsec collapsed x-only" id="math" aria-labelledby="hMath">
     <div class="math-head">
       <div class="math-title"><h2 id="hMath">🧮 The math behind your beach</h2>
-      <button class="btn math-toggle" id="mathToggle" type="button" aria-expanded="true" aria-controls="mathBody"><span class="chev" aria-hidden="true">▾</span> <span class="lbl">Hide the math</span></button></div>
+      <button class="btn math-toggle" id="mathToggle" type="button" aria-expanded="false" aria-controls="mathBody"><span class="chev" aria-hidden="true">▾</span> <span class="lbl">Show the math</span></button></div>
       <p>The model tracks the shoreline \(y_1\) and an offshore contour \(y_2\) at every spot \(x\) along the beach as time \(t\) passes. Some parts of the equation are always working; others switch on when you build something, add sand or change the weather. New parts appear in colour.</p>
     </div>
-    <div class="math-body" id="mathBody">
+    <div class="math-body" id="mathBody" hidden>
     <div class="math-top">
       <div class="math-left">
         <div class="master-card">
@@ -235,18 +249,18 @@
   </section>
 
   <div class="about">
-    <section>
-      <h2>🔬 How the model works</h2>
+    <details class="about-box">
+      <summary><h2>🔬 How the model works</h2></summary>
       <p>This is a <b>two-line model</b> (Bakker, 1968), a step up from the classic one-line model of Pelnard-Considère (1956). It follows two lines along the beach: the shoreline, and an offshore depth contour about 2.5&nbsp;m deep (the dotted line in the sea). Each line moves back and forth as sand flows along the shore, and sand also moves between them: storms pull it off the beach onto an offshore bar, and calm waves bring it back. Short groins block only the inner line; long ones block both.</p>
       <p>Waves that arrive at an angle drive a current in the surf zone that carries sand along the beach. Where that flow speeds up, the beach loses sand and retreats; where it slows down (behind a groin, in the calm lee of a breakwater) the beach builds out. Sea-level rise shifts the whole profile landward (the Bruun rule).</p>
       <p><b>Refraction and diffraction.</b> The sim computes the wave crests over the whole sea bed by solving the eikonal equation for the wave phase, with the water depth from the two lines and the wave speed from linear wave theory. Crests slow down and bend to face the shore in shallow water (refraction), and wrap around the ends of structures into their shadows (diffraction). The wave angle where they break drives the sand, so salients behind breakwaters and the calm lee of groins come from the waves themselves.</p>
       <p><b>Tides, dunes and overwash.</b> During a storm the sim resolves the tide (Maine's semidiurnal tide, 12.42 hours). Waves run up the beach (Stockdon et al., 2006); when sea level + tide + surge + run-up climbs above the dune toe, the dune is cut back (Larson et al., 2004, with coefficients fit to Camp Ellis). A wide beach lifts the toe, so it shields the dune. Once the dune is gone, waves wash over onto the road and flood houses. Between storms, wind slowly rebuilds dunes on wide beaches.</p>
       <p><b>Waves blocked and focused.</b> Headlands and long jetties shape the waves that reach the beach. A rocky headland blocks waves arriving from its side, leaving a calm shadow in its lee, and no sand gets around it. Waves that hit a headland or a long jetty bounce back and pile up on top of the incoming waves, so the beach just updrift sees waves up to 25% bigger (as beside the Camp Ellis jetty).</p>
-      <p><b>Dune grass.</b> Planted beach grass binds the dune with its roots and traps blowing sand. On planted stretches the model makes storm erosion 40% slower and post-storm recovery 30% faster (illustrative values). Grass does not change longshore drift, and it stops working where the sea reaches the dune.</p>      <p><b>Shorebirds.</b> Piping plovers and least terns, both endangered in Maine, nest on open, dry sand in front of the dunes from May through August. A nesting area stays safe while there is at least 20&nbsp;m of dry beach in front of the dune, is at risk below that, and is lost below 8&nbsp;m (for example in front of a seawall). A storm during nesting season washes out nests on narrow beaches. At the end of each season, safe areas fledge about 1.44 chicks per pair, Maine's statewide rate in 2025.</p>
+      <p><b>Dune grass.</b> Planted beach grass binds the dune with its roots and traps blowing sand. On planted stretches the model makes storm erosion 40% slower and post-storm recovery 30% faster (illustrative values). Grass does not change longshore drift, and it stops working where the sea reaches the dune.</p>      <p><b>Shorebirds.</b> Piping plovers and least terns, both endangered in Maine, nest on open, dry sand in front of the dunes from May through August. A nesting area stays safe while there is at least 20&nbsp;m of dry beach in front of the dune, is at risk below that, and is lost below 8&nbsp;m (for example in front of a seawall). A storm during nesting season washes out nests on narrow beaches. At the end of each season, safe areas fledge about 1.44 chicks per pair, Maine's statewide rate in 2025 (Camp Ellis and Pine Point use their own, much lower 2025 rate of about 0.23, and Wells its record 2). A colony needs roughly 1.25 chicks per pair just to hold steady, so colonies above that slowly grow and those below it shrink. Plovers nest in open sand and sparse young grass; only thick, established grass that has built out onto the beach pushes them toward the water.</p>
       <p>The sim solves the shoreline equations with finite differences on 150 cells, each 10&nbsp;m long, taking hundreds of small time steps per second, and recomputes the wave field on a 5&nbsp;m grid (about 42,000 points) four times a second with a fast-sweeping solver.</p>
-    </section>
-    <section>
-      <h2>🤔 What it leaves out</h2>
+    </details>
+    <details class="about-box">
+      <summary><h2>🤔 What it leaves out</h2></summary>
       <ul>
         <li>Line models assume gently curving shorelines. Where a shoreline turns sharply (the sides of a tombolo, say) the sim caps the wave angle used for sand transport at 45° and lets over-steep stretches slump sideways, so tombolos and salients come out smooth and a little broader than a detailed 2D model would give.</li>
         <li>The wave field uses geometric (ray) optics: refraction and the bending of crests around obstacles are included, but wave heights in shadows use a simpler sheltering factor, and the sea bed is idealized from two contour lines.</li>
@@ -255,9 +269,9 @@
         <li>The season climate is illustrative: winter swell from the east–northeast, calm summers with south–southeast swell, shaped by the UNE Camp Ellis buoy record and NOAA buoy 44007.</li>
       </ul>
       <p>Use it to build intuition, not to forecast a real beach.</p>
-    </section>
-    <section>
-      <h2>📚 Sources</h2>
+    </details>
+    <details class="about-box">
+      <summary><h2>📚 Sources</h2></summary>
       <ol>
         <li>Pelnard-Considère, R. (1956). Essai de théorie de l'évolution des formes de rivage en plages de sable et de galets. <i>4èmes Journées de l'Hydraulique</i>.</li>
         <li>Bakker, W.T. (1968). The dynamics of a coast with a groyne system. <i>Proc. 11th Coastal Eng. Conf.</i>; Bakker, Klein Breteler &amp; Roos (1970), <i>Proc. 12th Coastal Eng. Conf.</i>, ch. 64 (groin sheltering and diffraction).</li>
@@ -277,9 +291,10 @@
         <li><a href="https://www.ndbc.noaa.gov/station_page.php?station=44007" target="_blank" rel="noopener">NOAA NDBC buoy 44007, Portland</a> and the <a href="https://ekelting.github.io/UNE-Camp-Ellis-SPOT-32787C/" target="_blank" rel="noopener">UNE Camp Ellis wave buoy</a> (wave seasons and storm directions).</li>
         <li><a href="https://tidesandcurrents.noaa.gov/sltrends/sltrends_station.shtml?id=8418150" target="_blank" rel="noopener">NOAA sea level trend, Portland ME (8418150)</a>.</li>
         <li><a href="https://maineaudubon.org/news/plovers-all-over-2025-season-recap/" target="_blank" rel="noopener">Maine Audubon (2025), plover season recap</a> and <a href="https://www.maine.gov/ifw/fish-wildlife/wildlife/endangered-threatened-species/essential-wildlife-habitat/pplt-nests.html" target="_blank" rel="noopener">Maine IF&amp;W, piping plover and least tern essential habitat</a>.</li>
+        <li><a href="https://experience.arcgis.com/experience/f93ea27787ea4944944eaa9d0c825597" target="_blank" rel="noopener">Maine Geological Survey, Maine Beach Mapping</a>: the high-tide dry beach widths each Maine preset starts from; and <a href="https://www.fws.gov/sites/default/files/documents/piping-plover-abundance-and-productivity-update-2021.pdf" target="_blank" rel="noopener">USFWS, Atlantic Coast piping plover abundance and productivity</a>.</li>
         <li>Maine beach presets: <a href="https://www.maine.gov/dacf/mgs/explore/marine/virtual/saco/virtual_saco_bay.pdf" target="_blank" rel="noopener">Maine Geological Survey, Saco Bay coastal processes</a>; <a href="https://www.nae.usace.army.mil/Missions/Projects-Topics/Camp-Ellis/" target="_blank" rel="noopener">USACE Camp Ellis project</a>; <a href="https://www.pressherald.com/2026/07/09/sacos-camp-ellis-jetty-project-is-underway-heres-what-you-need-to-know/" target="_blank" rel="noopener">Press Herald (2026), Camp Ellis spur jetty</a>; <a href="https://en.wikipedia.org/wiki/Webhannet_River" target="_blank" rel="noopener">Webhannet River and Wells Harbor jetties</a>; <a href="https://digitalmaine.com/cgi/viewcontent.cgi?article=1636&amp;context=mgs_publications" target="_blank" rel="noopener">MGS (2024), Shoreline dynamics at Popham Beach</a>.</li>
       </ol>
-    </section>
+    </details>
   </div>
 </div>
 <script src="js/sandbox.js"></script>

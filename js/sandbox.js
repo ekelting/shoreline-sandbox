@@ -26,8 +26,10 @@ const START_MONTH = 8; // September
 const S = {
   t: 0, yls: new Float64Array(N), y2: new Float64Array(N), structures: [], fills: [], sandAdded: 0,
   storm: null, storms: 0, mode: 'cycle', H0: 1, T: 8.5, th: 0, slr: 2, eta: 0, speed: 1 / 30, playing: false,
-  K1: 0.2, d50: 0.3, hstar: 8, normal: 90, turn: 0, expo: 1, place: 'generic', tideAmp: 1.3, timing: 'random', dune: new Float64Array(N), over: new Float64Array(N), floods: 0, twl: 0, rq: 42000, mounds: [], houses: HOUSES.map(x => ({ x, gone: false })), riverW: 60, critters: [], nests: [], fledged: 0, lastMonth: -1, vol: 200000, tool: 'inspect', nextId: 1, placed: false, lastSurge: 0
+  K1: 0.2, d50: 0.3, hstar: 8, normal: 90, turn: 0, expo: 1, place: 'generic', tideAmp: 1.3, timing: 'random', dune: new Float64Array(N), over: new Float64Array(N), floods: 0, twl: 0, rq: 42000, mounds: [], houses: HOUSES.map(x => ({ x, gone: false })), riverW: 60, critters: [], nests: [], fledged: 0, lastMonth: -1, vol: 200000, tool: 'inspect', nextId: 1, placed: false, lastSurge: 0,
+  y0: new Float64Array(N).fill(Y0)   // starting shoreline (each Maine preset sets its own from MGS beach widths)
 };
+const HIST = { snaps: [], last: -1e9, at: -1, ready: false };   // rewind history (see 'rewind' below)
 const y = new Float64Array(N), Hc = new Float64Array(N), Kd = new Float64Array(N), Q = new Float64Array(N + 1), Q2 = new Float64Array(N + 1), FR = new Float64Array(N + 1), YB = new Float64Array(N + 1);
 let W = null; // current waves (breaking info)
 
@@ -223,7 +225,13 @@ function prep(w) {
     if (isStem(s)) { skip[s.face] = 1; if (s.type === 'headland') for (let j = cellOf(s.x - 50); j <= cellOf(s.x + 50) + 1; j++) skip[clamp(j, 0, N)] = 1; }
     if (s.type === 'river') { const c = riverCells(s); for (let j = c.i1; j <= c.i2 + 1; j++) skip[j] = 1; }
   }
-  return { soft: softMask(), wall: wallMask(), veg: vegReach(), skip };
+  const lee = new Float64Array(N).fill(1e9);
+  for (const s of S.structures) {
+    if (s.type === 'breakwater') for (let i = cellOf(s.x1); i <= cellOf(s.x2); i++) lee[i] = Math.min(lee[i], s.y);
+    if (s.type === 'island') for (let i = cellOf(s.x - s.rx); i <= cellOf(s.x + s.rx); i++) lee[i] = Math.min(lee[i], islandFront(s, (i + 0.5) * DX));
+    const hsp = headSpan(s); if (hsp) for (let i = cellOf(hsp[0]); i <= cellOf(hsp[1]); i++) lee[i] = Math.min(lee[i], s.tip);
+  }
+  return { soft: softMask(), wall: wallMask(), veg: vegReach(), skip, lee };
 }
 function step(dt, w, pre) {
   const A = Aprof(), a1 = a1f(), a2 = a2f(), D1 = D1f(), D2 = D2f(), y2 = S.y2;
@@ -328,7 +336,7 @@ function step(dt, w, pre) {
   }
   // the river keeps its mouth open: the shoreline across the channel can't build out past the banks
   for (const s of S.structures) if (s.type === 'river') {
-    const ch = riverCells(s), cap = Y0 + 20; // the mouth can build out a little, but the river flushes anything more
+    const ch = riverCells(s), cap = S.y0[cellOf(s.x)] + 20; // the mouth can build out a little, but the river flushes anything more
     for (let i = ch.i1; i <= ch.i2; i++) if (S.yls[i] > cap) S.yls[i] = cap;
   }
   // plan-shape limiter: where a line turns steeper than about 35° (e.g. the sides of a tombolo), sand slumps sideways,
@@ -660,7 +668,7 @@ function draw(time) {
   }
   drawOverwash();
   drawGrass(time);
-  drawNests();
+  drawNests(time);
   // rivers (channel)
   for (const s of S.structures) if (s.type === 'river') drawRiver(s, time);
   if (S.storm) drawStormWater(w, time);
@@ -671,7 +679,7 @@ function draw(time) {
   ctx.stroke();
   // initial shoreline ghost
   ctx.strokeStyle = 'rgba(15, 40, 55, 0.55)'; ctx.setLineDash([5, 5]); ctx.lineWidth = 1.2;
-  ctx.beginPath(); ctx.moveTo(0, py(Y0)); ctx.lineTo(CW, py(Y0)); ctx.stroke(); ctx.setLineDash([]);
+  ctx.beginPath(); for (let i = 0; i < N; i++) { const X = (i + 0.5) * DX; i ? ctx.lineTo(px(X), py(S.y0[i])) : (ctx.moveTo(0, py(S.y0[0])), ctx.lineTo(px(X), py(S.y0[i]))); } ctx.lineTo(CW, py(S.y0[N - 1])); ctx.stroke(); ctx.setLineDash([]);
   // structures
   for (const s of S.structures) {
     if (s.type === 'seawall') {
@@ -860,16 +868,27 @@ function riverCells(s) {
 }
 function drawRiver(s, time) {
   const sy = shoreAt(s.x), hw = s.w / 2, bank = riverBank(s);
-  // salt marsh banks where the houses and dune would be
+  // salt marsh banks where the houses and dune would be (a jettied harbour mouth is built up right to the water)
+  if (s.marsh !== false) {
   ctx.fillStyle = '#8eab6b'; ctx.fillRect(px(s.x - bank), py(DUNE_TOE), px(2 * bank), (DUNE_TOE - 12) * sy); // from the road up to the dune line
   const rr = seeded(Math.round(s.x) + 3); ctx.strokeStyle = 'rgba(60, 90, 45, 0.6)'; ctx.lineWidth = 1;
   for (let i = 0; i < 40 + s.w / 2; i++) { const X = s.x - bank + rr() * 2 * bank, Y = 14 + rr() * (DUNE_TOE - 14); ctx.beginPath(); ctx.moveTo(px(X), py(Y)); ctx.lineTo(px(X - 1), py(Y + 5)); ctx.moveTo(px(X), py(Y)); ctx.lineTo(px(X + 2), py(Y + 5)); ctx.stroke(); }
+  }
   // the channel: a straight rectangle from the back of the map to the shoreline
   const cx1 = px(s.x - hw), cx2 = px(s.x + hw), top = py(sy + 2);
   ctx.fillStyle = '#3f8fb2'; ctx.fillRect(cx1, top, cx2 - cx1, CH - top);
   ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1; ctx.setLineDash([6, 10]); ctx.lineDashOffset = -time * 12;
   ctx.beginPath(); ctx.moveTo(px(s.x), CH); ctx.lineTo(px(s.x), top); ctx.stroke();   // flow line
   ctx.setLineDash([]); ctx.lineDashOffset = 0;
+  if (s.bridge === false) {
+    // no bridge at the mouth: the road stops at the water on each side, with a barrier
+    for (const [ex, dir] of [[s.x - hw, -1], [s.x + hw, 1]]) {
+      const bx = px(ex + dir * 3), bw = Math.max(3, 2.2 * sc);
+      ctx.fillStyle = '#6f757b'; ctx.fillRect(Math.min(px(ex), bx), py(12), Math.abs(bx - px(ex)) + 1, 12 * sy);
+      for (let j = 0; j < 4; j++) { ctx.fillStyle = j % 2 ? '#ffffff' : '#d9412b'; ctx.fillRect(bx - bw / 2, py(11 - j * 2.6), bw, 2.6 * sy); }
+    }
+    return;
+  }
   // bridge carrying the road over the river
   // the road continues straight across: pavement over the whole marsh, railings over the water
   const rx1 = px(s.x - bank), rx2 = px(s.x + bank), bx1 = px(s.x - hw - 8), bx2 = px(s.x + hw + 8);
@@ -886,15 +905,29 @@ function drawDraft() {
   else if (isStem(d)) { drawRocks(d.x, STEM_ROOT, d.x, d.tip, d.type === 'jetty' ? 18 : 10, 1); const hsp = headSpan(d); if (hsp) drawRocks(hsp[0], d.tip, hsp[1], d.tip, 11, 2); }
   else if (d.type === 'breakwater') drawRocks(d.x1, d.y, d.x2, d.y, 14, 3);
   else if (d.type === 'grass') { ctx.fillStyle = 'rgba(79,138,58,0.45)'; ctx.fillRect(px(d.x1), py(d.y2), px(d.x2) - px(d.x1), (d.y2 - d.y1) * sy); ctx.strokeStyle = '#2f5a22'; ctx.setLineDash([4, 3]); ctx.lineWidth = 1.2; ctx.strokeRect(px(d.x1), py(d.y2), px(d.x2) - px(d.x1), (d.y2 - d.y1) * sy); ctx.setLineDash([]); }
+  else if (d.type === 'nest') {
+    const xc = d.dragged ? (d.x1 + d.x2) / 2 : d.xs, back = nestBack(xc), x1 = d.dragged ? d.x1 : d.xs - 46, x2 = d.dragged ? d.x2 : d.xs + 46;
+    ctx.fillStyle = 'rgba(179,139,93,0.18)'; ctx.fillRect(px(x1), py(back + 2 + d.d), px(x2) - px(x1), d.d * sy);
+    ctx.strokeStyle = NEST_ROPE; ctx.lineWidth = 1.4; ctx.setLineDash([4, 2]); ctx.strokeRect(px(x1), py(back + 2 + d.d), px(x2) - px(x1), d.d * sy); ctx.setLineDash([]);
+    ctx.fillStyle = '#4a3a2a'; ctx.font = '600 11px system-ui, sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(`${Math.round(x2 - x1)} m · up to ${d.dragged && x2 - x1 >= 30 ? clamp(Math.floor(((x2 - x1) / 2 - 14) / 16), 1, 12) : 4} pairs`, px(xc), py(back + 2 + d.d) - 4); ctx.textAlign = 'start';
+  }
   else if (d.type === 'seawall') { ctx.strokeStyle = '#b3b8bc'; ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(px(d.x1), py(d.y)); ctx.lineTo(px(d.x2), py(d.y)); ctx.stroke(); }
   ctx.globalAlpha = 1;
 }
 // ---------- shorebird nesting ----------
 // Piping plovers and least terns (both endangered in Maine) nest on open, dry sand between the
 // wrack line and the dunes, May 1 – Aug 31 (Maine IF&W). A site needs dry beach in front of the dune.
-const CHICKS_PER_PAIR = 1.44; // Maine statewide productivity, 2025 (Maine Audubon)
+const CHICKS_PER_PAIR = 1.44; // Maine statewide productivity, 2025 (Maine Audubon); presets with their own 2025 counts override it (S.chicks)
+// a nesting area's half-length along the beach (m): a user-sized area keeps the size it was roped off at; otherwise it
+// grows with the number of pairs. Each pair needs about 32 m of beach, so a bigger area can hold more pairs.
+const nestHW = n => n.hw ?? 14 + 16 * n.pairs, nestCap = n => n.hw ? clamp(Math.floor((n.hw - 14) / 16), 1, 12) : 4;
+const NEST_ROPE = '#b38b5d';
+const HOLD_STEADY = 1.25;     // chicks per pair a piping plover population needs just to hold steady (Atlantic Coast estimates ~1.2–1.3; the recovery goal is 1.5)
 const inSeason = () => { const m = Math.floor(monthPos()); return m >= 4 && m <= 7; };
-const nestBack = x => Math.max(DUNE_TOE + Math.max(0, -S.dune[cellOf(x)]), ...S.structures.filter(g => g.type === 'grass' && x >= g.x1 - 10 && x <= g.x2 + 10).map(g => g.y2));   // the back of the open sand (grass that has spread onto the beach is not nesting habitat)
+// the back of the open sand. Plovers happily nest in sparse, young grass and along its edge, so only dense, established
+// grass that has built out onto the beach pushes nests seaward (and even then they sit at its sparse front edge)
+const nestBack = x => Math.max(DUNE_TOE + Math.max(0, -S.dune[cellOf(x)]), ...S.structures.filter(g => g.type === 'grass' && x >= g.x1 - 10 && x <= g.x2 + 10 && grassDensity(g) > 0.6).map(g => g.y2 - 8));
 function nestStatus(n) {
   const w = Math.min(shoreAt(n.x - 20), shoreAt(n.x), shoreAt(n.x + 20)) - nestBack(n.x);
   if (w < 8) return 'lost';
@@ -910,7 +943,7 @@ function nestSeasonTick(w) {
       for (const n of S.nests) {
         const st = nestStatus(n);
         n.good = !n.washed && st === 'ok';
-        if (!n.washed && st !== 'lost') S.fledged += n.pairs * CHICKS_PER_PAIR * (st === 'risk' ? 0.5 : 1);
+        if (!n.washed && st !== 'lost') S.fledged += n.pairs * (S.chicks ?? CHICKS_PER_PAIR) * (st === 'risk' ? 0.5 : 1);
       }
     }
     S.lastMonth = m;
@@ -926,34 +959,64 @@ function nestSeasonTick(w) {
 function plovReturn() {
   let good = 0;
   for (const n of S.nests) {
-    if (n.good) { good++; if (n.pairs < 4 && Math.random() < 0.2 && !nestBlocked(n.x, n.pairs + 1, n)) n.pairs++; }
+    const prod = S.chicks ?? CHICKS_PER_PAIR;
+    if (n.good) {
+      good++;
+      if (n.pairs < nestCap(n) && Math.random() < clamp(0.1 + 0.4 * (prod - HOLD_STEADY), 0, 0.35) && (n.hw || !nestBlocked(n.x, 14 + 16 * (n.pairs + 1), n))) n.pairs++;
+      else if (n.pairs > 1 && Math.random() < clamp(0.4 * (HOLD_STEADY - prod), 0, 0.35)) n.pairs--;   // too few chicks to replace the adults that die
+    }
     else if (n.good === false && n.pairs > 1 && Math.random() < 0.5) n.pairs--;
     n.good = undefined;
   }
-  if (good && S.nests.length < 8 && Math.random() < 0.15 + 0.05 * good) {
+  if (good && S.nests.length < 8 && Math.random() < (0.15 + 0.05 * good) * clamp((S.chicks ?? CHICKS_PER_PAIR) / CHICKS_PER_PAIR, 0, 1.3)) {
     for (let tries = 0; tries < 40; tries++) {
       const x = snapX(60 + Math.random() * (XL - 120));
-      if (nestBlocked(x, 1) || S.nests.some(n => Math.abs(n.x - x) < 160)) continue;
+      if (nestBlocked(x, 30) || S.nests.some(n => Math.abs(n.x - x) < 160)) continue;
       if (Math.min(shoreAt(x - 40), shoreAt(x), shoreAt(x + 40)) - nestBack(x) < 35) continue;
       S.nests.push({ x, pairs: 1, washed: false, born: S.t }); break;
     }
   }
 }
-function drawPlover(cx, cy, k) {
-  // piping plover: pale sand back, white underparts, black neck band and forehead bar, orange bill with a black tip
-  const o = '#2e2416';
-  ctx.save(); ctx.translate(cx, cy); ctx.scale(k, k); ctx.lineWidth = 0.55; ctx.strokeStyle = o;
-  ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.ellipse(0.6, 0.9, 4.8, 2.9, 0, 0, 7); ctx.fill();        // shadow
-  ctx.fillStyle = '#e9dcc0'; ctx.beginPath(); ctx.ellipse(0, 0, 4.4, 2.9, 0, 0, 7); ctx.fill(); ctx.stroke();         // back
-  ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.ellipse(0.6, 1.2, 3.1, 1.4, 0, 0, 7); ctx.fill();                    // white belly
-  ctx.fillStyle = '#cdbb95'; ctx.beginPath(); ctx.moveTo(-4.2, -0.4); ctx.lineTo(-6, 0); ctx.lineTo(-4.2, 0.6); ctx.fill(); ctx.stroke(); // tail
-  ctx.fillStyle = '#111'; ctx.beginPath(); ctx.ellipse(2.4, -1, 0.9, 2.2, 0.5, 0, 7); ctx.fill();                      // black neck band
-  ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(3.8, -1.9, 2, 0, 7); ctx.fill(); ctx.stroke();                   // white face
-  ctx.fillStyle = '#e9dcc0'; ctx.beginPath(); ctx.arc(3.6, -2.4, 1.5, Math.PI, Math.PI * 2.1); ctx.fill();              // sandy crown
-  ctx.fillStyle = '#111'; ctx.fillRect(3.1, -3.5, 1.9, 0.55);                                                          // black forehead bar
-  ctx.fillStyle = '#f08a24'; ctx.beginPath(); ctx.moveTo(5.5, -2.2); ctx.lineTo(7.4, -1.8); ctx.lineTo(5.5, -1.3); ctx.fill(); // orange bill
-  ctx.fillStyle = '#111'; ctx.beginPath(); ctx.moveTo(6.8, -1.95); ctx.lineTo(7.4, -1.8); ctx.lineTo(6.8, -1.6); ctx.fill();   // black tip
-  ctx.beginPath(); ctx.arc(4.4, -2.2, 0.5, 0, 7); ctx.fill();                                                          // eye
+function drawPlover(cx, cy, k, time, look) {
+  // piping plover: a round, sand-coloured bird the size of a sparrow, white below, with a black breast band and forehead
+  // bar, a big dark eye, a short orange bill with a black tip and bright orange legs (breeding plumage, May–Aug)
+  const o = 'rgba(60,45,25,0.85)', t = time || 0, bob = Math.max(0, Math.sin(t * 2.2 + cx * 0.13)) ** 8 * 0.9; // an occasional head-dip, like a feeding plover
+  ctx.save(); ctx.translate(cx, cy); ctx.scale(k * (look < 0 ? -1 : 1), k); ctx.lineWidth = 0.45; ctx.strokeStyle = o; ctx.lineCap = 'round';
+  ctx.fillStyle = 'rgba(60,40,10,0.22)'; ctx.beginPath(); ctx.ellipse(0.8, 4.5, 4.8, 1.1, 0, 0, 7); ctx.fill();          // shadow
+  ctx.strokeStyle = '#f08a24'; ctx.lineWidth = 0.75;                                                                   // orange legs and toes
+  ctx.beginPath(); ctx.moveTo(0, 2.6); ctx.lineTo(-0.4, 4.4); ctx.lineTo(0.5, 4.5); ctx.moveTo(1.6, 2.6); ctx.lineTo(1.9, 4.4); ctx.lineTo(2.8, 4.5); ctx.stroke();
+  ctx.strokeStyle = o; ctx.lineWidth = 0.45;
+  ctx.fillStyle = '#9c7c4c'; ctx.beginPath(); ctx.moveTo(-3.6, -0.9); ctx.lineTo(-6.2, -0.2); ctx.lineTo(-3.8, 0.9); ctx.closePath(); ctx.fill(); ctx.stroke(); // tail
+  ctx.fillStyle = '#f7f3ea'; ctx.beginPath(); ctx.ellipse(0.5, 0.3, 4.4, 3.2, 0, 0, 7); ctx.fill(); ctx.stroke();       // round white body
+  ctx.fillStyle = '#b8955f'; ctx.beginPath(); ctx.ellipse(-0.6, -0.9, 3.9, 2.2, -0.12, 0, 7); ctx.fill(); ctx.stroke();  // sandy-brown back and wing
+  ctx.fillStyle = 'rgba(255,240,210,0.35)'; ctx.beginPath(); ctx.ellipse(-0.4, -1.8, 2.6, 0.7, -0.12, 0, 7); ctx.fill(); // sunlit top of the wing
+  ctx.strokeStyle = 'rgba(95,70,40,0.85)'; ctx.lineWidth = 0.5; ctx.beginPath(); ctx.moveTo(-3.2, -0.2); ctx.quadraticCurveTo(-0.8, 0.9, 1.6, -0.3); ctx.moveTo(-2.6, 0.5); ctx.quadraticCurveTo(-1, 1.1, 0.4, 0.6); ctx.stroke(); // wing feathers
+  ctx.translate(0, bob);
+  ctx.fillStyle = '#f7f3ea'; ctx.strokeStyle = o; ctx.beginPath(); ctx.arc(3.7, -2.8, 2.5, 0, 7); ctx.fill(); ctx.stroke(); // big round head, white face
+  ctx.fillStyle = '#c9a874'; ctx.beginPath(); ctx.arc(3.5, -2.9, 2.45, Math.PI * 1.02, Math.PI * 1.95); ctx.quadraticCurveTo(3.6, -3.6, 1.1, -3.1); ctx.fill(); // sandy crown and nape
+  ctx.fillStyle = '#1b1712'; ctx.beginPath(); ctx.ellipse(4.3, -4.75, 1.3, 0.42, 0.15, 0, 7); ctx.fill();               // black forehead bar
+  ctx.beginPath(); ctx.moveTo(1.6, -1.2); ctx.quadraticCurveTo(3.6, 0.2, 5.4, -1.3); ctx.quadraticCurveTo(3.6, -0.6, 1.9, -1.9); ctx.closePath(); ctx.fill(); // black breast band
+  ctx.beginPath(); ctx.arc(4.65, -3.1, 0.78, 0, 7); ctx.fill();                                                          // big dark eye
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(4.9, -3.38, 0.28, 0, 7); ctx.fill();                                 // twinkle
+  ctx.fillStyle = 'rgba(240,150,140,0.35)'; ctx.beginPath(); ctx.ellipse(4.6, -1.95, 0.7, 0.4, 0, 0, 7); ctx.fill();    // a hint of a cheek
+  ctx.fillStyle = '#f39a2e'; ctx.beginPath(); ctx.moveTo(5.9, -3.3); ctx.quadraticCurveTo(7.1, -2.9, 7.4, -2.6); ctx.lineTo(5.9, -2.2); ctx.closePath(); ctx.fill(); // short orange bill
+  ctx.fillStyle = '#1b1712'; ctx.beginPath(); ctx.moveTo(6.9, -2.85); ctx.lineTo(7.4, -2.6); ctx.lineTo(6.9, -2.4); ctx.fill(); // black tip
+  ctx.restore();
+}
+function drawChick(cx, cy, k, time, seed) {
+  // plover chicks run about within hours of hatching: "cotton balls on toothpicks", speckled sandy fluff on long legs
+  const t = time || 0, step = Math.sin(t * 9 + seed * 2.1) * 0.5;
+  ctx.save(); ctx.translate(cx, cy); ctx.scale(k, k); ctx.lineCap = 'round';
+  ctx.fillStyle = 'rgba(60,40,10,0.2)'; ctx.beginPath(); ctx.ellipse(0.3, 3.2, 2.4, 0.6, 0, 0, 7); ctx.fill();
+  ctx.strokeStyle = '#d98a3a'; ctx.lineWidth = 0.55; ctx.beginPath(); ctx.moveTo(-0.3, 1.2); ctx.lineTo(-0.5 + step, 3.1); ctx.moveTo(0.8, 1.2); ctx.lineTo(1 - step, 3.1); ctx.stroke();
+  ctx.fillStyle = '#e9dcbc'; ctx.strokeStyle = 'rgba(90,70,40,0.6)'; ctx.lineWidth = 0.35;
+  ctx.beginPath(); ctx.arc(0.2, 0, 1.9, 0, 7); ctx.fill(); ctx.stroke();                       // fluffy body
+  ctx.beginPath(); ctx.arc(1.6, -1.6, 1.25, 0, 7); ctx.fill(); ctx.stroke();                  // head
+  ctx.fillStyle = 'rgba(120,95,60,0.55)'; for (const [a, b] of [[-0.8, -0.6], [0.4, -1], [-0.2, 0.4], [1.2, -2.2]]) { ctx.beginPath(); ctx.arc(a, b, 0.25, 0, 7); ctx.fill(); } // speckles
+  ctx.fillStyle = '#fbf8f0'; ctx.beginPath(); ctx.ellipse(0.6, 0.8, 1.2, 0.7, 0, 0, 7); ctx.fill();    // pale belly
+  ctx.fillStyle = '#1b1712'; ctx.beginPath(); ctx.arc(2.05, -1.75, 0.38, 0, 7); ctx.fill();          // eye
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(2.15, -1.88, 0.13, 0, 7); ctx.fill();
+  ctx.fillStyle = '#3a2f22'; ctx.beginPath(); ctx.moveTo(2.75, -1.75); ctx.lineTo(3.35, -1.55); ctx.lineTo(2.75, -1.35); ctx.fill(); // tiny dark bill
   ctx.restore();
 }
 function drawScrape(cx, cy, r, eggs, wet) {
@@ -977,15 +1040,15 @@ function drawScrape(cx, cy, r, eggs, wet) {
     for (let k = 0; k < 3; k++) { ctx.beginPath(); ctx.arc(ex + (rr() - 0.5) * r * 0.35, ey + (rr() - 0.5) * r * 0.25, Math.max(0.35, r * 0.045), 0, 7); ctx.fill(); }
   }
 }
-function drawNests() {
-  const season = inSeason();
+function drawNests(time) {
+  const season = inSeason(), m = Math.floor(monthPos());   // May: eggs; Jun–Jul: chicks; Aug: chicks have fledged
   for (const n of S.nests) {
     const st = nestStatus(n), sh = shoreAt(n.x), back = nestBack(n.x);
-    const y1 = back + 2, y2 = Math.min(back + 26, sh - 1);
-    const half = 14 + 16 * n.pairs;
+    const y1 = back + 2, y2 = Math.min(back + 2 + (n.d ?? 24), sh - 1);
+    const half = nestHW(n);
     const x1 = px(n.x - half), x2 = px(n.x + half), top = py(Math.max(y1 + 2, y2)), bot = py(y1), cy = (top + bot) / 2;
     // symbolic fencing: rope strung between stakes
-    const rope = st === 'lost' ? 'rgba(90,90,90,0.8)' : st === 'risk' ? '#d95926' : '#7a5a36';
+    const rope = st === 'lost' ? 'rgba(90,90,90,0.8)' : st === 'risk' ? '#d95926' : NEST_ROPE;
     ctx.strokeStyle = rope; ctx.lineWidth = 1.1; ctx.setLineDash([4, 2]);
     ctx.strokeRect(x1, top, x2 - x1, bot - top); ctx.setLineDash([]);
     ctx.fillStyle = rope;
@@ -998,13 +1061,25 @@ function drawNests() {
     const nk = Math.min(sc, sy * 1.3), r = clamp(nk * 9, 4, 12), k = clamp(nk * 2.1, 1, 2);
     for (let i = 0; i < n.pairs; i++) {
       const nx = x1 + (x2 - x1) * (i + 1) / (n.pairs + 1) - r * 0.6;
-      if (season && !n.washed) { drawScrape(nx, cy, r, 4, false); drawPlover(nx + r * 2.3, cy - r * 0.2, k); }
+      if (season && !n.washed && m === 4) { drawScrape(nx, cy, r, 4, false); drawPlover(nx + r * 2.3, cy - r * 0.2, k, time, 1); }
+      else if (season && !n.washed && m <= 6) {
+        // hatched: an empty scrape, a parent keeping watch and the chicks that survive so far (more hatch than fledge)
+        drawScrape(nx, cy, r * 0.9, 0, false);
+        const prod = (S.chicks ?? CHICKS_PER_PAIR) * (st === 'risk' ? 0.5 : 1), nch = clamp(Math.round(prod * (m === 5 ? 1.6 : 1.1)), 0, 4);
+        const t = time || 0;
+        drawPlover(nx + r * 0.4, cy - r * 0.35, k, t, Math.sin(t * 0.7 + nx) > 0 ? 1 : -1);
+        for (let c = 0; c < nch; c++) {
+          const ph = t * 0.9 + c * 2.3 + nx * 0.01, dx = Math.sin(ph) * r * 1.3 + (c - (nch - 1) / 2) * r * 0.9, dy = Math.cos(ph * 1.3) * r * 0.35;
+          drawChick(nx + r * 1.6 + dx, cy + r * 0.45 + dy, k * 0.95, t, c + nx);
+        }
+      }
+      else if (season && !n.washed) { drawScrape(nx, cy, r * 0.85, 0, false); drawPlover(nx + r * 1.2, cy - r * 0.2, k, time, -1); }
       else if (season && n.washed) drawScrape(nx, cy, r, 3, true);
       else drawScrape(nx, cy, r * 0.85, 0, false);
     }
   }
 }
-const riverBank = r => r.w / 2 + 36; // half-width of the marsh + bridge around a river
+const riverBank = r => r.w / 2 + (r.marsh === false ? 6 : 36); // half-width of the river plus any salt-marsh banks
 const HOUSE_WALLS = ['#f28b82', '#f6d365', '#8ec5e8', '#9fd49a', '#fdfaf2', '#c9b6ea', '#f7b77a', '#7fd3c7'];
 const HOUSE_ROOFS = ['#b23a31', '#3b4f63', '#2f6b4a', '#5a3e2b', '#2f78d6', '#6b3fa0'];
 function drawHouse(w, h, seedX, atRisk) {
@@ -1056,13 +1131,13 @@ function drawChart() {
   const w = ch.clientWidth, h = 96; cctx.clearRect(0, 0, w, h);
   const cs = getComputedStyle(document.documentElement);
   const cOr = cs.getPropertyValue('--orange').trim(), cGr = cs.getPropertyValue('--green').trim(), cMu = cs.getPropertyValue('--muted').trim(), cLn = cs.getPropertyValue('--line').trim(), cBg = cs.getPropertyValue('--panel').trim();
-  let mx = 10; for (let i = 0; i < N; i++) mx = Math.max(mx, Math.abs(y[i] - Y0));
+  let mx = 10; for (let i = 0; i < N; i++) mx = Math.max(mx, Math.abs(y[i] - S.y0[i]));
   mx = Math.ceil(mx / 10) * 10;
   const top = 6, bottom = h - 20, mid = (top + bottom) / 2, sy = (bottom - top) / 2 / mx, bw = w / N;
   cctx.strokeStyle = cLn; cctx.lineWidth = 1;
   [top, mid, bottom].forEach(yy => { cctx.beginPath(); cctx.moveTo(0, yy + 0.5); cctx.lineTo(w, yy + 0.5); cctx.stroke(); });
   for (let i = 0; i < N; i++) {
-    const d = y[i] - Y0; cctx.fillStyle = d >= 0 ? cGr : cOr;
+    const d = y[i] - S.y0[i]; cctx.fillStyle = d >= 0 ? cGr : cOr;
     cctx.fillRect(i * bw, d >= 0 ? mid - d * sy : mid, Math.max(1, bw - 0.4), Math.abs(d) * sy);
   }
   for (const s of S.structures) {
@@ -1103,7 +1178,7 @@ const TOOLS = [
     svg: '<rect x="2" y="16" width="20" height="6" rx="1" fill="#e2c68c"/><path d="M5 16 Q12 5 19 16Z" fill="#d7b270" stroke="currentColor" stroke-width="1.4"/>' },
   { id: 'river', label: 'River', hint: '<b>River:</b> click the beach to add a river. Set its width and how much sand it carries with the River width and River sand sliders below. The sliders also change the river you placed last.',
     svg: '<rect x="2" y="16" width="20" height="6" rx="1" fill="#e2c68c"/><path d="M11 23 C8 18 15 15 11 9 M11 9 l-3 -5" stroke="#2f82ad" stroke-width="3.2" fill="none" stroke-linecap="round"/>' },
-  { id: 'nest', label: 'Nesting area', hint: '<b>Nesting area:</b> click the upper beach to rope off a shorebird nesting area (piping plovers and least terns nest on open sand just in front of the dunes, May–August).',
+  { id: 'nest', label: 'Nesting area', hint: '<b>Nesting area:</b> click the upper beach to rope off a shorebird nesting area, or drag to choose its size (sideways for length, toward the sea for depth; each pair needs about 30 m of beach). Piping plovers and least terns nest on open sand just in front of the dunes, May–August).',
     svg: '<rect x="2" y="16" width="20" height="6" rx="1" fill="#e2c68c"/><path d="M4 16V9M20 16V9M4 10h16" stroke="currentColor" stroke-width="1.4" stroke-dasharray="2 1.5" fill="none"/><ellipse cx="12" cy="13" rx="4" ry="2.6" fill="#d8c7a0" stroke="currentColor" stroke-width="1"/><circle cx="15.2" cy="11" r="1.7" fill="#d8c7a0" stroke="currentColor" stroke-width="1"/><path d="M13.6 12.3h3" stroke="#1b1b1b" stroke-width="1.2"/>' },
   { id: 'build', label: 'Rebuild house', hint: '<b>Rebuild house:</b> click an empty lot to rebuild a washed-away house. It needs at least 20 m of beach in front (or a seawall).',
     svg: '<path d="M4 12l8-7 8 7v9H4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><rect x="10" y="15" width="4" height="6" fill="currentColor"/>' },
@@ -1111,15 +1186,35 @@ const TOOLS = [
     svg: '<path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>' }
 ];
 const toolbar = document.getElementById('toolbar'), toolHint = document.getElementById('toolHint');
-TOOLS.forEach(t => {
-  const b = document.createElement('button'); b.className = 'tool'; b.type = 'button'; b.dataset.tool = t.id;
-  b.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${t.svg}</svg>${t.label}`;
-  b.addEventListener('click', () => setTool(t.id)); toolbar.appendChild(b);
+// tools are grouped; the ones marked x appear only in Explorer mode
+const TOOL_GROUPS = [
+  ['Basics', ['inspect', 'erase', 'build']],
+  ['Rock walls', ['groin', 'tgroin', 'spur', 'jetty', 'breakwater', 'seawall', 'headland']],
+  ['Soft fixes', ['nourish', 'grass']],
+  ['Nature', ['river', 'island', 'nest']]
+];
+const EXPLORER_TOOLS = new Set(['tgroin', 'spur', 'headland', 'river', 'island', 'build']);
+TOOL_GROUPS.forEach(([name, ids]) => {
+  const row = document.createElement('div'); row.className = 'tool-group' + (ids.every(id => EXPLORER_TOOLS.has(id)) ? ' x-only' : '');
+  row.innerHTML = `<span class="tg-label">${name}</span>`;
+  for (const id of ids) {
+    const t = TOOLS.find(x => x.id === id); if (!t) continue;
+    const b = document.createElement('button'); b.className = 'tool' + (EXPLORER_TOOLS.has(id) ? ' x-only' : ''); b.type = 'button'; b.dataset.tool = t.id;
+    b.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${t.svg}</svg>${t.label}`;
+    b.addEventListener('click', () => setTool(t.id)); row.appendChild(b);
+  }
+  toolbar.appendChild(row);
 });
 function setTool(id) {
   S.tool = id; stage.dataset.tool = id;
   toolbar.querySelectorAll('.tool').forEach(b => b.setAttribute('aria-pressed', b.dataset.tool === id));
-  toolHint.innerHTML = TOOLS.find(t => t.id === id).hint;
+  // one sentence first, the rest behind "more"
+  const full = TOOLS.find(t => t.id === id).hint, cut = full.search(/\.\s/);
+  toolHint.classList.remove('open');
+  if (cut > 0 && cut < full.length - 3) {
+    toolHint.innerHTML = full.slice(0, cut + 1) + ' <a href="#" class="more">more ▸</a><span class="rest" hidden>' + full.slice(cut + 1) + '</span>';
+    toolHint.querySelector('.more').addEventListener('click', e => { e.preventDefault(); const r = toolHint.querySelector('.rest'), open = r.hidden; r.hidden = !open; toolHint.classList.toggle('open', open); e.target.textContent = open ? 'less ▴' : 'more ▸'; });
+  } else toolHint.innerHTML = full;
 }
 
 function worldFromEvent(e) {
@@ -1153,7 +1248,11 @@ function updateDraft(p) {
     const sh = shoreAt(draft.x); if (Math.abs(p.Y - draft.y0) > 6) draft.tip = clamp(p.Y, sh + 10, YL - 20);
     if (draft.type === 'spur' && Math.abs(p.X - draft.x0) > 12) { draft.side = p.X < draft.x ? -1 : 1; draft.head = clamp(Math.abs(p.X - draft.x), 25, 250); }
   }
-  else if (Math.abs(p.X - draft.xs) > 15 || (draft.type === 'grass' && Math.abs(p.Y - draft.ys) > 6)) {
+  if (draft.type === 'nest' && Math.abs(p.Y - draft.ys) > 6) {          // drag toward the sea to make the roped-off area deeper
+    const xc = draft.dragged ? (draft.x1 + draft.x2) / 2 : draft.xs, back = nestBack(xc);
+    draft.d = clamp(p.Y - back - 2, 10, Math.max(10, shoreAt(xc) - back - 4)); draft.deep = true;
+  }
+  if (!isStem(draft) && (Math.abs(p.X - draft.xs) > 15 || (draft.type === 'grass' && Math.abs(p.Y - draft.ys) > 6))) {
     draft.dragged = true; draft.x1 = clamp(Math.min(draft.xs, p.X), 0, XL); draft.x2 = clamp(Math.max(draft.xs, p.X), 0, XL);
     if (draft.type === 'grass') {                               // the grass patch is the rectangle you drag out, on dry land
       const Y = clamp(p.Y, 44, Math.min(shoreAt(draft.x1), shoreAt(draft.x2), shoreAt((draft.x1 + draft.x2) / 2)) - 12);
@@ -1164,6 +1263,17 @@ function updateDraft(p) {
 }
 function commitDraft() {
   const d = draft; draft = null; if (!d) return;
+  if (d.type === 'nest') {
+    const custom = d.dragged && d.x2 - d.x1 >= 30, hw = custom ? clamp((d.x2 - d.x1) / 2, 20, 250) : 46;
+    const x = custom ? snapX((d.x1 + d.x2) / 2) : snapX(d.xs);
+    if (nestBlocked(x, hw, null)) { toast('🚫 Something is in the way (a structure or another nesting area). Nesting areas need open sand.'); return; }
+    const n = { x, pairs: 2, washed: false };
+    if (custom) { n.hw = hw; n.pairs = Math.min(2, nestCap(n)); }
+    if (d.deep) n.d = d.d;
+    S.nests.push(n); placed();
+    if (custom) toast(`🪹 A ${Math.round(2 * hw)} m nesting area, room for up to ${nestCap(n)} plover pair${nestCap(n) > 1 ? 's' : ''}.`);
+    return;
+  }
   if (d.x2 !== undefined && d.x2 - d.x1 < 40) { d.x1 = clamp(d.xs - 60, 0, XL); d.x2 = clamp(d.xs + 60, 0, XL); }
   if (d.type === 'island') { const sh = Math.max(shoreAt(d.x - d.rx), shoreAt(d.x), shoreAt(d.x + d.rx)); d.y = clamp(Math.max(d.y, sh + 20 + d.ry), 0, YL - d.ry - 5); delete d.isl; delete d.xs; }
   if (d.type === 'grass') { if (d.y2 - d.y1 < 8) { d.y1 = DUNE_TOE - 4; d.y2 = DUNE_TOE + 16; } d.y = (d.y1 + d.y2) / 2; d.t0 = S.t; delete d.box; delete d.ys; }
@@ -1175,12 +1285,11 @@ function addStructure(d) {
   if (s.type === 'seawall') { s.i1 = clamp(Math.floor(s.x1 / DX), 0, N - 1); s.i2 = clamp(Math.floor(s.x2 / DX), 0, N - 1); }
   if (s.type === 'river') { s.cell = clamp(Math.floor(s.x / DX), 0, N - 1); if (!s.w) s.w = 60; }
   S.structures.push(s); placed(); refreshTerms();
-  const before = S.nests.length; S.nests = S.nests.filter(n => !nestBlocked(n.x, n.pairs));
+  const before = S.nests.length; S.nests = S.nests.filter(n => !nestBlocked(n.x, nestHW(n)));
   if (S.nests.length < before && !S.silent) toast('🪹 A nesting area was in the way, so it was moved off the beach.');
 }
-function nestBlocked(x, pairs, self) {
-  const hw = 14 + 16 * pairs;
-  if (self && S.nests.some(n => n !== self && Math.abs(n.x - x) < hw + 14 + 16 * n.pairs + 10)) return true;
+function nestBlocked(x, hw, self) {
+  if (self !== undefined && S.nests.some(n => n !== self && Math.abs(n.x - x) < hw + nestHW(n) + 10)) return true;
   return S.structures.some(s => (isStem(s) && Math.abs(s.x - x) < hw + 8) || (s.type === 'seawall' && x + hw > s.x1 && x - hw < s.x2) || (s.type === 'river' && Math.abs(s.x - x) < riverBank(s) + hw));
 }
 function toast(msg) {
@@ -1213,7 +1322,7 @@ function eraseAt(p) {
   const mi = S.mounds.findIndex(m => Math.abs(m.x - p.X) < MSX && Math.abs(m.y - p.Y) < MSY);
   if (mi >= 0 && !best) { S.mounds.splice(mi, 1); return; }
   let bestNest = null;
-  for (const n of S.nests) { const hw = 14 + 16 * n.pairs; const d = seg(n.x - hw, DUNE_TOE + 12, n.x + hw, DUNE_TOE + 12); if (d < bd) { bd = d; bestNest = n; } }
+  for (const n of S.nests) { const hw = nestHW(n); const d = p.X >= n.x - hw && p.X <= n.x + hw && p.Y > DUNE_TOE - 6 && p.Y < nestBack(n.x) + 6 + (n.d ?? 24) ? 0 : seg(n.x - hw, DUNE_TOE + 12, n.x + hw, DUNE_TOE + 12); if (d < bd) { bd = d; bestNest = n; } }
   if (bestNest) { S.nests = S.nests.filter(n => n !== bestNest); return; }
   if (best) { S.structures = S.structures.filter(s => s !== best); scatterParticles(); refreshTerms(); }
 }
@@ -1228,13 +1337,13 @@ cv.addEventListener('pointerdown', e => {
     if (h && Math.abs(h.x - p.X) < 50) { if (h.gone) rebuild(h); else toast('🏡 That house is still standing.'); }
     return;
   }
-  if (S.tool === 'nest') { const x = snapX(p.X); if (nestBlocked(x, 2)) { toast('🚫 There\'s a structure in the way. Nesting areas need open sand.'); return; } S.nests.push({ x, pairs: 2, washed: false }); placed(); return; }
+  if (S.tool === 'nest') { draft = { type: 'nest', xs: p.X, ys: p.Y, x1: p.X - 46, x2: p.X + 46, d: 24, dragged: false }; cv.setPointerCapture(e.pointerId); return; }
   draft = makeDraft(S.tool, p);
   if (draft) cv.setPointerCapture(e.pointerId);
 });
 cv.addEventListener('pointermove', e => {
   const p = worldFromEvent(e);
-  if (draft) { updateDraft(p); return; }
+  if (draft) { tip.hidden = true; updateDraft(p); return; }
   showTip(e, p);
 });
 cv.addEventListener('pointerup', e => { if (draft) { updateDraft(worldFromEvent(e)); commitDraft(); } });
@@ -1244,8 +1353,8 @@ const tip = document.getElementById('tip');
 function showTip(e, p) {
   const r = stage.getBoundingClientRect();
   const sh = shoreAt(p.X), q = faceQ(p.X), width = sh - DUNE_TOE, i = clamp(Math.floor(p.X / DX), 0, N - 1);
-  const nest = S.nests.find(n => Math.abs(n.x - p.X) < 14 + 16 * n.pairs && p.Y < DUNE_TOE + 40 && p.Y > DUNE_TOE - 10);
-  const nestTxt = nest ? `<br><b>Shorebird nesting area</b>: ${nest.pairs} plover pair${nest.pairs > 1 ? 's' : ''}, ${{ ok: 'safe', risk: 'at risk (narrow beach)', lost: 'lost (no dry beach)' }[nestStatus(nest)]}${nest.washed && inSeason() ? ', washed out this season' : ''}` : '';
+  const nest = S.nests.find(n => Math.abs(n.x - p.X) < nestHW(n) && p.Y < nestBack(n.x) + 4 + (n.d ?? 24) && p.Y > DUNE_TOE - 10);
+  const nestTxt = nest ? `<br><b>Shorebird nesting area</b>: ${nest.pairs} plover pair${nest.pairs > 1 ? 's' : ''} (room for ${nestCap(nest)}), ${Math.round(2 * nestHW(nest))} m long, ${{ ok: 'safe', risk: 'at risk (narrow beach)', lost: 'lost (no dry beach)' }[nestStatus(nest)]}${nest.washed && inSeason() ? ', washed out this season' : ''}` : '';
   const where = `<span class="mono">x = ${Math.round(p.X)} m</span>`;
   const grass = S.structures.find(st => st.type === 'grass' && p.X >= st.x1 && p.X <= st.x2);
   const grassTxt = grass ? (shoreAt(p.X) >= DUNE_TOE + 2 ? '<br>🌾 Dune grass here: storms erode the beach and dune 40% slower' + `<br>🌱 ${Math.round(grassDensity(grass) * 100)}% cover, ${(grass.x2 - grass.x1).toFixed(0)} m long` + (S.dune[cellOf(p.X)] < -0.5 ? `; new foredune ${(-S.dune[cellOf(p.X)]).toFixed(0)} m out onto the beach` : '') : '<br>🌾 Dune grass here has been washed out') : '';
@@ -1282,7 +1391,7 @@ function showTip(e, p) {
     tip.innerHTML = `${p.Y < 14 ? '🚗 <b>Road</b>' : lot ? lot : p.Y < 42 ? '🏡 <b>Houses</b>' : p.Y > faceY ? '🏖️ <b>Bare sand</b> where the dune was' : '🌾 <b>Dunes</b>'} · ${where}<br>Dry beach in front of the dune: ${Math.max(0, wid).toFixed(0)} m${duneTxt}${overTxt}${grassTxt}${nestTxt}`;
   } else {
     const wid = sh - faceY, ht = Math.max(0, wid - S.tideAmp / BETA_F);
-    tip.innerHTML = `🏖️ <b>Beach</b> · ${where}<br>Dry beach ${Math.max(0, wid).toFixed(0)} m wide at mid-tide, ${ht.toFixed(0)} m at high tide (${(sh - Y0 >= 0 ? '+' : '−') + Math.abs(sh - Y0).toFixed(1)} m since the start)<br>Sand drifting ${fmtQ(q)}${duneTxt}${grassTxt}${nestTxt}`;
+    tip.innerHTML = `🏖️ <b>Beach</b> · ${where}<br>Dry beach ${Math.max(0, wid).toFixed(0)} m wide at mid-tide, ${ht.toFixed(0)} m at high tide (${(sh - S.y0[cell] >= 0 ? '+' : '−') + Math.abs(sh - S.y0[cell]).toFixed(1)} m since the start)<br>Sand drifting ${fmtQ(q)}${duneTxt}${grassTxt}${nestTxt}`;
   }
   tip.style.left = Math.min(e.clientX - r.left, r.width - 280) + 'px'; tip.style.top = Math.min(e.clientY - r.top, r.height - 130) + 'px';
   tip.hidden = false;
@@ -1293,6 +1402,13 @@ function fmtVol(v) { const a = Math.abs(v); return a >= 1e6 ? (a / 1e6).toFixed(
 const leftDir = () => compass(S.normal - 90), rightDir = () => compass(S.normal + 90);
 function fmtQ(q) { return Math.abs(q) < 500 ? 'about 0' : (q > 0 ? `toward ${rightDir()} → ` : `← toward ${leftDir()} `) + fmtVol(q) + ' m³/yr'; }
 function compass(deg) { const n = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW']; return n[((Math.round(deg / 22.5) % 16) + 16) % 16]; }
+const WIND8 = ['north', 'northeast', 'east', 'southeast', 'south', 'southwest', 'west', 'northwest'];
+const word8 = deg => WIND8[((Math.round(deg / 45) % 8) + 8) % 8];
+function plainDrift(q) {
+  if (Math.abs(q) < 3000) return '🏖️ Sand is barely moving';
+  const toRight = q > 0, dir = word8(S.normal + (toRight ? 90 : -90)), fast = Math.abs(q) > 100000 ? ' fast' : '';
+  return toRight ? `Sand is moving${fast} ${dir} →` : `← Sand is moving${fast} ${dir}`;
+}
 const sgn = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(1);
 
 // ---------- controls ----------
@@ -1303,14 +1419,14 @@ function setMode(m) {
   $('modeSeg').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', b.dataset.mode === m));
   const notes = {
     cycle: 'Waves change month by month: winter swell from the east–northeast, calmer summer swell from the south–southeast.',
-    winter: 'Holding winter: bigger waves from the east–northeast.',
-    spring: 'Holding spring: moderate waves from the east.',
-    summer: 'Holding summer: small waves from the south–southeast.',
-    fall: 'Holding fall: moderate waves, turning from southeast to east.',
+    winter: 'Holding winter: bigger waves from the east–northeast, all year round. The calendar keeps running (plovers still nest in summer); only the waves are held.',
+    spring: 'Holding spring: moderate waves from the east, all year round. The calendar keeps running; only the waves are held.',
+    summer: 'Holding summer: small waves from the south–southeast, all year round. The calendar keeps running; only the waves are held.',
+    fall: 'Holding fall: moderate waves, turning from southeast to east, all year round. The calendar keeps running; only the waves are held.',
     custom: 'Your own waves: set the direction, height and period below.'
   };
   $('modeNote').textContent = notes[m];
-  $('waveTag').textContent = m === 'cycle' ? 'Year-round waves' : m === 'custom' ? 'Custom waves' : m[0].toUpperCase() + m.slice(1) + ' waves';
+  $('waveTag').textContent = m === 'cycle' ? 'Year-round waves' : m === 'custom' ? 'Custom waves' : { winter: '❄️', spring: '🌷', summer: '☀️', fall: '🍂' }[m] + ' ' + m[0].toUpperCase() + m.slice(1) + ' waves all year';
 }
 $('modeSeg').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setMode(b.dataset.mode); });
 function toCustom() { if (S.mode !== 'custom') { const b = siteBase(); S.H0 = b.H0; S.T = b.T; S.th = Math.round(b.th); setMode('custom'); } }
@@ -1359,18 +1475,20 @@ $('speed').addEventListener('input', () => { S.speed = spFrom(+$('speed').value)
 function setPlaying(v) {
   if (v && !S.playing && S.t === 0) toast('🏁 And we\'re off!');
   S.playing = v;
-  $('btnStart').disabled = v; $('btnPause').disabled = !v;
+  $('btnStart').disabled = v; $('btnPause').disabled = !v; $('btnStart').classList.toggle('pulse', !v && S.t === 0);
+  if (v) markStep('start');
   $('runStatus').innerHTML = v ? '<b>Running.</b> Sand is moving; time is passing.' : (S.t > 0 ? '<b>Paused.</b> Waves still animate, but the beach and clock are frozen.' : '<b>Ready.</b> Add structures now, then press Start.');
 }
 $('btnStart').addEventListener('click', () => setPlaying(true));
 $('btnPause').addEventListener('click', () => setPlaying(false));
 $('btnUndo').addEventListener('click', () => { S.structures.pop(); scatterParticles(); refreshTerms(); });
 $('btnClear').addEventListener('click', () => { S.structures = []; scatterParticles(); refreshTerms(); });
-$('btnReset').addEventListener('click', () => { resetBeach(); refreshTerms(); });
+$('btnReset').addEventListener('click', () => { endChallenge(null); resetBeach(); refreshTerms(); });
 $('btnNoreaster').addEventListener('click', () => startStorm('noreaster'));
 $('btnTropical').addEventListener('click', () => startStorm('tropical'));
 function startStorm(k) {
   if (S.storm) return;
+  markStep('storm');
   const def = STORMS[k], dur = def.days / 365, tPeak = S.t + dur / 2;
   const tHW = S.timing === 'high' ? tPeak : S.timing === 'low' ? tPeak + TIDE_P / 2 : tPeak + Math.random() * TIDE_P;
   S.storm = { def, t0: S.t, dur, tHW }; S.storms++;
@@ -1423,8 +1541,9 @@ dial.addEventListener('keydown', e => {
 // experiments
 document.querySelectorAll('[data-exp]').forEach(b => b.addEventListener('click', () => runExperiment(b.dataset.exp)));
 function runExperiment(k) {
+  endChallenge(null);
   S.structures = []; S.storm = null; $('btnNoreaster').disabled = $('btnTropical').disabled = false;
-  S.slr = 2;
+  S.slr = 2; S.y0.fill(Y0);
   if (k === 'groins') { setMode('winter'); [450, 650, 850, 1050].forEach(x => addStructure({ type: 'groin', x, tip: Y0 + 130 })); }
   if (k === 'jetty') { setMode('cycle'); addStructure({ type: 'jetty', x: 900, tip: Y0 + 320 }); addStructure({ type: 'river', x: 960, w: 60, q: 40000 }); }
   if (k === 'salient') { setMode('custom'); S.H0 = 1.2; S.T = 9; S.th = 0; addStructure({ type: 'breakwater', x1: 620, x2: 860, y: Y0 + 120 }); }
@@ -1440,58 +1559,73 @@ function runExperiment(k) {
 // settings are teaching estimates (normal = direction the beach faces; turn = clockwise bending of
 // the offshore waves by headlands and the bay; expo = offshore wave-height factor).
 const FT = 0.3048;
+// dbw: mean high-tide dry beach width (m) along the stretch, from Maine Geological Survey beach mapping (2017–2025 means,
+// MGS_Beach_Mapping layer 3), read as [x, width] points. The starting shoreline (mean sea level) sits that far in front of
+// the dune toe plus the extra beach uncovered between high tide and mid-tide.
+const sh0 = x => S.y0[cellOf(x)];
+const lerpPts = (pts, x) => { if (x <= pts[0][0]) return pts[0][1]; for (let k = 1; k < pts.length; k++) if (x <= pts[k][0]) { const [a, A] = pts[k - 1], [b, B] = pts[k]; return A + (B - A) * (x - a) / (b - a); } return pts[pts.length - 1][1]; };
 const PLACES = {
   generic: { nests: [[230, 2], [570, 1], [930, 2], [1270, 1]], name: 'Generic beach', normal: 90, turn: 0, expo: 1, d50: 0.3, hstar: 8, K1: 0.2, build: () => {},
     blurb: 'A straight, open beach with nothing built on it yet. A blank sandbox.' },
-  campEllis: { nests: [[140, 1], [380, 1]], name: 'Camp Ellis', normal: 73, turn: 10, expo: 0.55, d50: 0.2, hstar: 7, K1: 0.2,
+  campEllis: { nests: [[140, 1], [380, 1]], name: 'Camp Ellis', normal: 78, turn: 0, expo: 0.45, d50: 0.2, hstar: 7, K1: 0.2, chicks: 3 / 13,
+    dbw: [[0, 22], [200, 20], [500, 5], [700, 2], [1240, 1]],
     build: () => {
       addStructure({ type: 'jetty', x: 1250, tip: YL - 25 });
-      addStructure({ type: 'river', x: 1340, w: 110, q: 40000 });
+      addStructure({ type: 'river', x: 1340, w: 160, q: 13000, bridge: false, marsh: false });
       addStructure({ type: 'jetty', x: 1430, tip: YL - 55 });
       addStructure({ type: 'seawall', x1: 930, x2: 1240, y: DUNE_TOE + 2 });
     },
-    blurb: 'Saco, at the south end of Saco Bay. The Saco River reaches the sea at the SSE end between its north and south jetties (built from the 1860s on). Sand drifts north along the bay, so the beach beside the jetty gets no new supply and has eroded for over a century; riprap now fronts many homes. The river\'s sand is carried out past the jetty instead of feeding the beach. Waves are gentle most of the time (UNE buoy: mean 0.4 m) but storms come from the E–ENE. Plovers nest toward Ferry Beach; the Camp Ellis–Pine Point stretch had 13 pairs in 2025 but fledged only 3 chicks.' },
-  campEllisSpur: { nests: [[140, 1], [380, 1]], name: 'Camp Ellis + spur jetty', normal: 73, turn: 10, expo: 0.55, d50: 0.2, hstar: 7, K1: 0.2,
+    blurb: 'Saco, at the south end of Saco Bay. The Saco River reaches the sea at the SSE end between its north jetty (about 6,600 ft or 2 km long, finished in the 1930s; here it is cut off at the edge of the map) and south jetty (about 4,800 ft). Sand drifts north along the bay (about 15,000–20,000 m³ a year in the UNE model), so the beach beside the jetty gets no new supply and has eroded for over a century (about 1 m a year); riprap now fronts many homes, and Maine Geological Survey mapping finds almost no dry sand at high tide along the jetty end (0–3 m), widening to about 22 m toward Ferry Beach. The river brings roughly 10,000–17,000 m³ of sand a year, but most is carried out past the jetties instead of feeding the beach. Waves are gentle most of the time (UNE buoy: mean 0.4 m, energy-weighted direction 81°), and all storms come from the E–ENE. The river fills the whole gap between the two jetties; there is no bridge at the mouth. Plovers nest toward Ferry Beach; the Camp Ellis–Pine Point stretch had 13 pairs in 2025 but fledged only 3 chicks, so plovers here raise about 0.23 chicks per pair (too few to keep the colony going).' },
+  campEllisSpur: { nests: [[140, 1], [380, 1]], name: 'Camp Ellis + spur jetty', normal: 78, turn: 0, expo: 0.45, d50: 0.2, hstar: 7, K1: 0.2, chicks: 3 / 13,
+    dbw: [[0, 22], [200, 20], [500, 5], [700, 2], [1240, 1]],
     build: () => {
       addStructure({ type: 'jetty', x: 1250, tip: YL - 25 });
-      addStructure({ type: 'breakwater', x1: 1250 - 750 * FT, x2: 1246, y: Y0 + 150 });
-      addStructure({ type: 'river', x: 1340, w: 110, q: 40000 });
+      addStructure({ type: 'breakwater', x1: 1250 - 750 * FT, x2: 1246, y: sh0(1150) + 150 });
+      addStructure({ type: 'river', x: 1340, w: 160, q: 13000, bridge: false, marsh: false });
       addStructure({ type: 'jetty', x: 1430, tip: YL - 55 });
       addStructure({ type: 'seawall', x1: 930, x2: 1240, y: DUNE_TOE + 2 });
     },
     fill: { x: 1150, V: 56000 },
     blurb: 'Camp Ellis with the Army Corps\' 750-ft (230 m) spur jetty, built off the north jetty and running parallel to shore (construction began in 2026, due to finish in August 2027). It shelters the beach behind it. The first nourishment (about 73,000 yd³, 56,000 m³) is planned for 2028 and is already placed here.' },
-  oob: { nests: [[240, 1], [1250, 1]], name: 'Old Orchard Beach', normal: 110, turn: 35, expo: 0.65, d50: 0.2, hstar: 7, K1: 0.2,
+  oob: { nests: [[240, 1], [1250, 1]], name: 'Old Orchard Beach', normal: 125, turn: 47, expo: 0.65, d50: 0.2, hstar: 7, K1: 0.2,
+    dbw: [[0, 30], [600, 28], [1500, 33]],
     build: () => { addStructure({ type: 'seawall', x1: 520, x2: 1050, y: DUNE_TOE + 2 }); },
-    blurb: 'The middle of Saco Bay: a wide, flat, fine-sand beach. Seawalls and riprap back its most built-up stretch. The Pier stands on open piles, so sand passes under it and it is not modelled. Net drift in Saco Bay is toward the north.' },
-  pinePoint: { nests: [[420, 2], [700, 2], [1020, 1]], name: 'Pine Point', normal: 110, turn: 40, expo: 0.6, d50: 0.2, hstar: 7, K1: 0.2,
-    build: () => { addStructure({ type: 'jetty', x: 200, tip: Y0 + 300 }); addStructure({ type: 'river', x: 90, w: 90, q: 10000 }); },
-    blurb: 'Scarborough, at the north end of Saco Bay, beside the Scarborough River jetty. Sand drifting north along the bay piles up against the jetty.' },
-  wells: { nests: [[110, 3], [190, 3], [520, 2]], name: 'Wells Beach', normal: 115, turn: 35, expo: 0.9, d50: 0.25, hstar: 8, K1: 0.2,
+    blurb: 'The middle of Saco Bay: a wide, flat, fine-sand beach. Seawalls and riprap back its most built-up stretch. The Pier stands on open piles, so sand passes under it and it is not modelled. Net drift in Saco Bay is toward the north. The high-tide beach is about 28–35 m wide (MGS).' },
+  pinePoint: { nests: [[420, 2], [700, 2], [1020, 1]], name: 'Pine Point', normal: 135, turn: 57, expo: 0.6, d50: 0.2, hstar: 7, K1: 0.2, chicks: 3 / 13,
+    dbw: [[200, 21], [450, 24], [750, 27], [1100, 23], [1500, 19]],
+    build: () => { addStructure({ type: 'jetty', x: 200, tip: sh0(260) + 180 }); addStructure({ type: 'river', x: 100, w: 110, q: 5000, bridge: false, marsh: false }); },
+    blurb: 'Scarborough, at the north end of Saco Bay, beside the Scarborough River jetty (1962, about 800 ft or 245 m long, extending seaward from Pine Point). Sand drifting north along the bay piles up against the jetty. The high-tide beach is about 19–27 m wide (MGS). Plovers use the Camp Ellis–Pine Point rate of 0.23 chicks per pair from 2025.' },
+  wells: { nests: [[520, 2], [620, 3], [760, 2]], name: 'Wells Beach', normal: 113, turn: 35, expo: 0.9, d50: 0.25, hstar: 8, K1: 0.2, chicks: 45 / 23,
+    dbw: [[0, 4], [295, 3], [435, 50], [700, 45], [1000, 35], [1200, 24], [1350, 10], [1500, 6]],
     build: () => {
-      addStructure({ type: 'jetty', x: 300, tip: Y0 + 260 });
-      addStructure({ type: 'jetty', x: 430, tip: Y0 + 250 });
-      addStructure({ type: 'seawall', x1: 600, x2: 1420, y: DUNE_TOE + 2 });
+      addStructure({ type: 'jetty', x: 300, tip: sh0(470) + 190 });
+      addStructure({ type: 'river', x: 365, w: 110, q: 2000, bridge: false });
+      addStructure({ type: 'jetty', x: 430, tip: sh0(470) + 210 });
+      addStructure({ type: 'seawall', x1: 850, x2: 1440, y: DUNE_TOE + 2 });
     },
-    blurb: 'Wells Harbor\'s twin rubble jetties (1960s, extended in 1965 to about 1,225 and 1,300 ft, 425 ft apart) guard the Webhannet River inlet at the NNE end, with Drakes Island beyond them. A seawall backs much of the developed Wells Beach to the south. The unarmored sand near the jetties is Maine\'s busiest plover beach: 23 pairs fledged 45 chicks in 2025.' },
-  kennebunk: { nests: [], name: 'Kennebunk Beach', normal: 165, turn: 30, expo: 0.6, d50: 0.25, hstar: 7, K1: 0.2,
+    blurb: 'Wells Harbor\'s twin rubble jetties (built 1961–65; the north one about 2,000 ft and the south one about 2,200 ft long in total, 425 ft or 130 m apart, ending about 8 ft below low water) guard the Webhannet River inlet at the NNE end, with Drakes Island beyond them. A seawall backs much of the developed Wells Beach to the south. The unarmored sand near the jetties is Maine\'s busiest plover beach: 23 pairs fledged 45 chicks in 2025 (about 2 per pair). The high-tide beach is about 45–55 m wide by the jetties and narrows to a few metres at the south end, while Drakes Island just north of the jetties has little dry sand (MGS). That pattern means sand drifts north along Wells Beach and piles up against the south jetty, so the sim\'s waves are set to push sand that way.' },
+  kennebunk: { nests: [], name: 'Kennebunk Beach', normal: 155, turn: 70, expo: 0.6, d50: 0.25, hstar: 7, K1: 0.2,
+    dbw: [[130, 24], [400, 22], [700, 12], [1000, 7], [1200, 5], [1500, 4]],
     build: () => {
-      addStructure({ type: 'seawall', x1: 180, x2: 1300, y: DUNE_TOE + 2 });
-      addStructure({ type: 'jetty', x: 1380, tip: Y0 + 250 });
-      addStructure({ type: 'river', x: 1450, w: 50, q: 5000 });
+      addStructure({ type: 'jetty', x: 30, tip: sh0(160) + 110 });
+      addStructure({ type: 'river', x: 75, w: 70, q: 5000, bridge: false, marsh: false });
+      addStructure({ type: 'jetty', x: 120, tip: sh0(160) + 130 });
+      addStructure({ type: 'seawall', x1: 200, x2: 1300, y: DUNE_TOE + 2 });
     },
-    blurb: 'Gooch\'s, Middle and Mother\'s beaches along Beach Avenue face south, with a long seawall behind them and the Kennebunk River jetties at the WSW end. With the seawall and no dry upper beach, there is no nesting habitat here.' },
-  ogunquit: { nests: [[280, 3], [600, 3], [920, 3], [1230, 3]], name: 'Ogunquit Beach', normal: 100, turn: 0, expo: 0.9, d50: 0.25, hstar: 8, K1: 0.2,
+    blurb: 'Gooch\'s, Middle and Mother\'s beaches along Beach Avenue face south-southeast, with a long seawall behind them. The Kennebunk River reaches the sea at the ENE end between two short stone jetties (the west jetty is about 590 ft or 180 m long after its 1966 extension). Most waves here come from the south-southeast. With the seawall and no dry upper beach, there is no nesting habitat here. Gooch\'s high-tide beach is about 20–27 m wide near the river and only a few metres at the west end (MGS).' },
+  ogunquit: { nests: [[280, 3], [600, 3], [920, 3], [1230, 3]], name: 'Ogunquit Beach', normal: 105, turn: 19, expo: 0.9, d50: 0.25, hstar: 8, K1: 0.2,
+    dbw: [[0, 36], [500, 35], [1000, 33], [1500, 34]],
     build: () => { addStructure({ type: 'river', x: 1440, w: 45, q: 8000 }); },
-    blurb: 'A natural barrier spit with dunes and the Ogunquit River behind it, reaching the sea at the south end. With no hard structures, it is a good control to compare with the others. It is one of Maine\'s main plover beaches (12+ pairs in 2025).' },
-  popham: { nests: [[620, 2], [880, 2], [1320, 2]], name: 'Popham Beach', normal: 180, turn: 45, expo: 0.8, d50: 0.3, hstar: 8, K1: 0.2,
+    blurb: 'A natural barrier spit with dunes and the Ogunquit River behind it, reaching the sea at the south end. With no hard structures, it is a good control to compare with the others. It is one of Maine\'s main plover beaches (12+ pairs in 2025). The high-tide beach is a steady 33–40 m wide (MGS).' },
+  popham: { nests: [[620, 2], [880, 2], [1320, 2]], name: 'Popham Beach', normal: 180, turn: 94, expo: 0.8, d50: 0.3, hstar: 8, K1: 0.2,
+    dbw: [[130, 26], [380, 33], [650, 42], [900, 80], [1200, 85], [1330, 46], [1440, 55]],
     build: () => {
-      addStructure({ type: 'river', x: 60, w: 140, q: 60000 });
+      addStructure({ type: 'river', x: 60, w: 140, q: 60000, bridge: false, marsh: false });
       addStructure({ type: 'seawall', x1: 150, x2: 380, y: DUNE_TOE + 2 });
-      addStructure({ type: 'island', x: 1100, y: Y0 + 150, rx: 85, ry: 45 });
-      addStructure({ type: 'river', x: 1460, w: 40, q: 5000 });
+      addStructure({ type: 'island', x: 1100, y: sh0(1100) + 150, rx: 85, ry: 45 });
+      addStructure({ type: 'river', x: 1460, w: 40, q: 5000, bridge: false });
     },
-    blurb: 'Phippsburg. A south-facing beach between the Kennebec River (E end) and the Morse River (W end). Fox Island, a rock island just offshore, acts like a natural breakwater with a tombolo that comes and goes. A riprap seawall at Hunnewell Beach causes erosion at its end. The beach swings hundreds of feet as the river channels move, which the model can\'t capture.' }
+    blurb: 'Phippsburg. A south-facing beach between the Kennebec River (E end) and the Morse River (W end). Fox Island, a rock island just offshore, acts like a natural breakwater with a tombolo that comes and goes. A riprap seawall at Hunnewell Beach causes erosion at its end. The beach swings hundreds of feet as the river channels move, which the model can\'t capture. The high-tide beach ranges from about 26 m by the Kennebec to over 85 m near Fox Island (MGS).' }
 };
 function syncSliders() {
   slr.value = S.slr; vol.value = S.vol; $('rw').value = S.riverW; $('rq').value = S.rq; k1.value = S.K1; d50.value = S.d50; hsIn.value = S.hstar;
@@ -1506,8 +1640,11 @@ Object.entries(PLACES).forEach(([k, pl]) => {
   b.addEventListener('click', () => loadPlace(k)); chips.appendChild(b);
 });
 function loadPlace(k) {
+  if (!CHL.starting) endChallenge(null);
+  markStep('place');
   const pl = PLACES[k]; S.place = k;
-  Object.assign(S, { normal: pl.normal, turn: pl.turn, expo: pl.expo, d50: pl.d50, hstar: pl.hstar, K1: pl.K1, slr: 2 });
+  Object.assign(S, { normal: pl.normal, turn: pl.turn, expo: pl.expo, d50: pl.d50, hstar: pl.hstar, K1: pl.K1, slr: 2, tideAmp: 1.3, chicks: pl.chicks ?? CHICKS_PER_PAIR });
+  for (let i = 0; i < N; i++) S.y0[i] = pl.dbw ? DUNE_TOE + lerpPts(pl.dbw, (i + 0.5) * DX) + 1.3 / BETA_F : Y0;
   S.structures = []; S.storm = null;
   S.nests = (pl.nests || []).map(([x, pairs]) => ({ x, pairs, washed: false }));
   setMode('cycle'); resetBeach(); S.silent = true; pl.build(); S.silent = false;
@@ -1525,9 +1662,9 @@ function resetBeach() {
   $('btnNoreaster').disabled = $('btnTropical').disabled = false;
   W = currentWaves();
   const yeq = -W_CS * (0.068 * W.Hb) / (BERM + 1.28 * W.Hb);
-  for (let i = 0; i < N; i++) { S.yls[i] = Y0; S.y2[i] = Y0 + weqAt(W.Hb, 0); Hc[i] = W.Hb; }
+  for (let i = 0; i < N; i++) { S.yls[i] = S.y0[i]; S.y2[i] = S.y0[i] + weqAt(W.Hb, 0); Hc[i] = W.Hb; }
   WF.ok = false; WF.job = null; WF.prev = null; WF.tStart = -1e9;
-  Q.fill(0); totals(); scatterParticles();
+  Q.fill(0); totals(); scatterParticles(); HIST.snaps = []; HIST.last = -1e9; HIST.at = -1; if (HIST.ready) histUI();
 }
 
 // ---------- equations panel ----------
@@ -1604,7 +1741,7 @@ const TERMS = [
     live: [['Wall with no dry beach', 'wallbare']], lock: 'Add a seawall' },
   { key: 'grass', c: 'grass', title: 'Dune grass', tag: 'from your planting',
     tex: String.raw`\begin{gathered}K_v = (1-\beta)\,K \ \text{(erosion)}\\ K_v = (1+\gamma)\,K \ \text{(recovery)}\\ m_d = 0.6\ \text{(dune cut)}\\ \beta = 0.4,\quad \gamma = 0.3\\ \text{foredune: } \frac{dx_d}{dt} = -1.5\ \mathrm{m/yr}\ \text{under the grass}\end{gathered}`,
-    text: 'Beach grass roots bind the dune and its stems trap blowing sand. On planted stretches, storms pull sand off the beach and cut the dune more slowly, and both rebuild faster afterwards. New plantings are sparse and fill in over a few years. The grass spreads about 2 m a year along the beach and 1.5 m a year toward the water while the dry beach is wide, and the sand it traps builds a new foredune under it (up to 25 m out), though plovers lose that open sand. Grass does not stop sand drifting along the shore, and it dies where the sea reaches the dune.',
+    text: 'Beach grass roots bind the dune and its stems trap blowing sand. On planted stretches, storms pull sand off the beach and cut the dune more slowly, and both rebuild faster afterwards. New plantings are sparse and fill in over a few years. The grass spreads about 2 m a year along the beach and 1.5 m a year toward the water while the dry beach is wide, and the sand it traps builds a new foredune under it (up to 25 m out). Plovers still nest in sparse young grass and along its edge; only thick, established grass pushes them seaward. Grass does not stop sand drifting along the shore, and it dies where the sea reaches the dune.',
     live: [['Planted', 'grassLen'], ['Cover', 'grassCover'], ['Still growing', 'grassOk'], ['New foredune', 'grassSpread']], lock: 'Plant dune grass' },
   { key: 'river', c: 'green', title: 'River sand supply', tag: 'from your rivers',
     tex: String.raw`q(x,t) = Q_r\,\delta(x-x_r)`,
@@ -1730,7 +1867,7 @@ function updateReadouts() {
   const mp = monthPos(), yr = Math.floor(S.t);
   $('clock').textContent = `Year ${yr} · ${MONTHS[Math.floor(mp)]}`;
   let Qm = 0; for (let j = 40; j <= 110; j++) Qm += Q[j]; Qm /= 71;
-  $('driftPill').textContent = 'Sand drift ' + fmtQ(Qm);
+  $('driftPill').textContent = UI.mode === 'simple' ? plainDrift(Qm) : 'Sand drift ' + fmtQ(Qm);
   const sb = $('stormBanner');
   if (S.storm) { const left = (S.storm.t0 + S.storm.dur - S.t) * 365; sb.hidden = false; sb.textContent = `${S.storm.def.name}: waves ${w.H0.toFixed(1)} m, surge ${w.surge.toFixed(1)} m, tide ${w.tide >= 0 ? '+' : '−'}${Math.abs(w.tide).toFixed(1)} m ${w.tide > S.tideAmp * 0.7 ? '(high tide!)' : w.tide < -S.tideAmp * 0.7 ? '(low tide)' : ''} · ${Math.max(0, left).toFixed(1)} days left (slow motion)`; }
   // sliders follow waves
@@ -1743,7 +1880,7 @@ function updateReadouts() {
   $('k1o').textContent = S.K1.toFixed(2); $('d50o').textContent = `${S.d50.toFixed(2)} mm`; $('hso').textContent = `${S.hstar.toFixed(1)} m`;
   // stats
   let sum = 0, mn = 1e9, mnI = 0, mx = -1e9, mxI = 0;
-  for (let i = 0; i < N; i++) { const d = y[i] - Y0; sum += d; if (d < mn) { mn = d; mnI = i; } if (d > mx) { mx = d; mxI = i; } }
+  for (let i = 0; i < N; i++) { const d = y[i] - S.y0[i]; sum += d; if (d < mn) { mn = d; mnI = i; } if (d > mx) { mx = d; mxI = i; } }
   $('stAvg').textContent = `${sgn(sum / N)} m`;
   $('stWorst').textContent = `${sgn(Math.min(0, mn))} m`; $('stWorstS').textContent = mn < -0.5 ? `at ${Math.round((mnI + 0.5) * DX)} m` : 'none yet';
   $('stBest').textContent = `${sgn(Math.max(0, mx))} m`; $('stBestS').textContent = mx > 0.5 ? `at ${Math.round((mxI + 0.5) * DX)} m` : 'none yet';
@@ -1777,6 +1914,52 @@ function updateReadouts() {
 
 // ---------- main loop ----------
 let last = performance.now(), lastUI = 0, wavePhase = 0;
+// ---------- rewind ----------
+// While the model runs it saves a snapshot of the beach about twice a month (and every couple of hours during a storm),
+// so you can drag back through time. Pressing Start from an earlier moment throws away the old future and carries on from there.
+const cloneNest = n => Object.assign({}, n);
+function snapshot() {
+  return {
+    t: S.t, eta: S.eta, yls: S.yls.slice(), y2: S.y2.slice(), dune: S.dune.slice(), over: S.over.slice(),
+    structures: JSON.parse(JSON.stringify(S.structures)), mounds: S.mounds.map(m => Object.assign({}, m)), fills: S.fills.map(f => Object.assign({}, f)),
+    nests: S.nests.map(cloneNest), houses: S.houses.map(h => Object.assign({}, h)),
+    storm: S.storm ? Object.assign({}, S.storm) : null, storms: S.storms, floods: S.floods, fledged: S.fledged, lastMonth: S.lastMonth, sandAdded: S.sandAdded, overToast: S.overToast
+  };
+}
+function histClear() { HIST.snaps = []; HIST.last = -1e9; HIST.at = -1; histUI(); }
+function histRecord(force) {
+  const gap = S.storm ? 0.08 / 365 : 1 / 24;
+  if (!force && S.t - HIST.last < gap) return;
+  if (HIST.at >= 0 && HIST.at < HIST.snaps.length - 1) HIST.snaps.length = HIST.at + 1;   // a new future replaces the old one
+  HIST.snaps.push(snapshot()); HIST.last = S.t; HIST.at = -1;
+  if (HIST.snaps.length > 3000) HIST.snaps = HIST.snaps.filter((sn, k) => k % 2 === 0 || k > HIST.snaps.length - 200 || sn.storm); // thin out the distant past
+  histUI();
+}
+function histRestore(k) {
+  const sn = HIST.snaps[k]; if (!sn) return;
+  setPlaying(false);
+  S.t = sn.t; S.eta = sn.eta; S.yls.set(sn.yls); S.y2.set(sn.y2); S.dune.set(sn.dune); S.over.set(sn.over);
+  S.structures = JSON.parse(JSON.stringify(sn.structures)); S.mounds = sn.mounds.map(m => Object.assign({}, m)); S.fills = sn.fills.map(f => Object.assign({}, f));
+  S.nests = sn.nests.map(cloneNest); sn.houses.forEach((h, i) => Object.assign(S.houses[i], h));
+  S.storm = sn.storm ? Object.assign({}, sn.storm) : null; S.storms = sn.storms; S.floods = sn.floods; S.fledged = sn.fledged; S.lastMonth = sn.lastMonth; S.sandAdded = sn.sandAdded; S.overToast = sn.overToast;
+  $('btnNoreaster').disabled = $('btnTropical').disabled = !!S.storm; if (!S.storm) $('stormBanner').hidden = true;
+  HIST.at = k; HIST.last = sn.t;
+  W = currentWaves(); WF.ok = false; WF.job = null; WF.prev = null; WF.tStart = -1e9;
+  totals(); scatterParticles(); refreshTerms(); updateReadouts(); drawChart(); histUI();
+  if (k < HIST.snaps.length - 1) $('runStatus').innerHTML = '<b>Rewound.</b> Drag on to replay, or press Start to carry on from here (what happened later is replaced).';
+}
+const clockText = t => `Year ${Math.floor(t)} · ${MONTHS[Math.floor(((START_MONTH + t * 12) % 12 + 12) % 12)]}`;
+function histUI() {
+  const row = $('rewindRow'), r = $('rewind'), n = HIST.snaps.length;
+  row.hidden = n < 2;
+  if (n < 2) return;
+  const k = HIST.at >= 0 ? HIST.at : n - 1;
+  r.max = n - 1; r.value = k; r.disabled = !!CHL.active;
+  row.title = CHL.active ? 'Rewind is off during a challenge' : '';
+  row.classList.toggle('past', k < n - 1);
+  $('rewindo').textContent = k < n - 1 ? `${clockText(HIST.snaps[k].t)} (of ${clockText(HIST.snaps[n - 1].t).replace('Year ', 'yr ')})` : 'now';
+}
+$('rewind').addEventListener('input', e => { if (!CHL.active) histRestore(+e.target.value); });
 function frame(now) {
   requestAnimationFrame(frame);          // keep the loop alive even if one frame hits a problem
   const dtReal = Math.min(0.05, Math.max(0, (now - last) / 1000)); last = now;
@@ -1784,22 +1967,214 @@ function frame(now) {
   if (!WF.ok) computeWaveField(W || currentWaves());
   else if (!WF.job && now - WF.tStart > 250) { WF.tStart = now; WF.job = fieldJob(W || currentWaves()); }
   if (WF.job && WF.job.next().done) WF.job = null;
-  if (S.playing) { advance(dtReal); moveParticles(dtReal); nestSeasonTick(W); checkHouses(); }
+  if (CHL.active && S.playing) challengeTick();
+  if (S.playing) { if (HIST.at >= 0) { HIST.snaps.length = HIST.at + 1; HIST.at = -1; } if (!HIST.snaps.length) histRecord(true); advance(dtReal); moveParticles(dtReal); nestSeasonTick(W); checkHouses(); histRecord(false); }
   const tSec = now / 1000;
   draw(tSec);
   if (now - lastUI > 200) { lastUI = now; updateReadouts(); updateLive(); drawChart(); }
 }
 
 // ---------- collapsible math section ----------
-function setMathOpen(open, save) {
+function setMathOpen(open) {
   const btn = $('mathToggle'), body = $('mathBody');
   body.hidden = !open; btn.setAttribute('aria-expanded', open); $('math').classList.toggle('collapsed', !open);
   btn.querySelector('.lbl').textContent = open ? 'Hide the math' : 'Show the math';
   if (open) { renderMaster(masterSrc); typeset([$('termsCore'), $('termsExtra'), document.querySelector('.glossary')]); }
-  if (save) { try { localStorage.setItem('shoreline-math', open ? 'open' : 'closed'); } catch (e) {} }
 }
-$('mathToggle').addEventListener('click', () => setMathOpen($('mathBody').hidden, true));
-(function () { let v = null; try { v = localStorage.getItem('shoreline-math'); } catch (e) {} if (v === 'closed') setMathOpen(false, false); })();
+$('mathToggle').addEventListener('click', () => setMathOpen($('mathBody').hidden));   // starts collapsed
+
+
+// ---------- Simple / Explorer ----------
+const UI = { mode: 'simple' };
+function setUI(m, save) {
+  UI.mode = m; document.body.classList.toggle('simple', m === 'simple');
+  $('uiSeg').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', b.dataset.ui === m));
+  if (m === 'simple' && EXPLORER_TOOLS.has(S.tool)) setTool('inspect');
+  if (m === 'simple' && S.mode === 'custom' && !CHL.active) setMode('cycle');
+  if (save) { try { localStorage.setItem('shoreline-ui', m); } catch (e) {} }
+  setTimeout(() => { resize(); drawChart(); }, 0);
+}
+$('uiSeg').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setUI(b.dataset.ui, true); });
+
+// ---------- first-visit welcome: three steps ----------
+const STEPS = ['place', 'start', 'storm'], STEP_TARGET = { place: '#placeChips', start: '#btnStart', storm: '#btnNoreaster' };
+const WEL = { on: false, done: new Set() };
+function stepsRender() {
+  const box = $('welcome'), next = STEPS.find(k => !WEL.done.has(k));
+  box.querySelectorAll('li').forEach(li => { li.classList.toggle('done', WEL.done.has(li.dataset.step)); li.classList.toggle('now', li.dataset.step === next); });
+  document.querySelectorAll('.coach').forEach(el => el.classList.remove('coach'));
+  if (WEL.on && next) { const t = document.querySelector(STEP_TARGET[next]); if (t) t.classList.add('coach'); }
+}
+function markStep(k) {
+  if (!WEL.on || WEL.done.has(k)) return;
+  WEL.done.add(k); stepsRender();
+  if (STEPS.every(x => WEL.done.has(x))) setTimeout(() => { toast('🎉 You\'ve got it! Now build something, or try a 🏆 Challenge.'); closeWelcome(); }, 1500);
+}
+function closeWelcome() {
+  WEL.on = false; $('welcome').hidden = true; stepsRender();
+  try { localStorage.setItem('shoreline-welcome', 'done'); } catch (e) {}
+}
+$('welcomeX').addEventListener('click', closeWelcome);
+$('tourBtn').addEventListener('click', () => startTour());
+
+// ---------- "Show me around" tour ----------
+const TOUR = [
+  ['.timebar', '⏱️ Time', 'Start and pause the model here, and choose how fast the years go by.'],
+  ['.toolcol', '🧰 Build', 'Pick a tool, then click the beach or the water. Rock walls trap sand; soft fixes add sand or hold it in place. Hover with 🔍 Look to find out what anything is.'],
+  ['.places', '🗺️ Maine beaches', 'Load a real Maine beach, with its jetties, seawalls and rivers already built.'],
+  ['#stage', '🌊 The beach', 'Waves roll in from the top. The sand line moves as waves carry sand along the shore, and the little houses, dunes and plover nests react.'],
+  ['.chartbox', '📈 What changed', 'Green means the beach grew, orange means it eroded, lined up with the beach above.'],
+  ['.stats', '📋 Scoreboard', 'Houses at risk, nesting shorebirds and how much beach is left at high tide.'],
+  ['#hWx', '⛈️ Storms', 'Send a nor\'easter or a tropical storm and watch the beach take a beating, then slowly heal.'],
+  ['#challengeBox', '🏆 Challenges', 'Not sure what to try? Pick a goal, like saving Camp Ellis or growing a tombolo.'],
+  ['#uiSeg', '🔬 Simple or Explorer', 'Explorer adds more tools, the wave settings and the math behind the model.']
+];
+let tourI = -1, tourEl = null, tourBubble = null;
+function tourTarget(sel) { const el = document.querySelector(sel); return sel.startsWith('#h') ? el.closest('section') : el; }
+function placeBubble() {
+  if (!tourEl || !tourBubble) return;
+  const r = tourEl.getBoundingClientRect(), b = tourBubble.getBoundingClientRect(), vw = window.innerWidth, vh = window.innerHeight;
+  let top = r.bottom + 12; if (top + b.height > vh - 8) top = Math.max(8, r.top - b.height - 12);
+  if (top < 8) top = Math.min(vh - b.height - 8, r.top + 12);
+  const left = clamp(r.left + r.width / 2 - b.width / 2, 8, vw - b.width - 8);
+  tourBubble.style.top = top + 'px'; tourBubble.style.left = left + 'px';
+}
+function tourShow(i) {
+  if (tourEl) tourEl.classList.remove('tour-hl');
+  tourI = i; if (i < 0 || i >= TOUR.length) return endTour();
+  const [sel, title, text] = TOUR[i]; tourEl = tourTarget(sel);
+  if (!tourEl || !tourEl.offsetParent) return tourShow(i + 1);
+  tourEl.classList.add('tour-hl');
+  tourEl.scrollIntoView({ block: 'center', behavior: 'auto' });
+  tourBubble.innerHTML = `<h3>${title}</h3><p>${text}</p><div class="tb-foot"><span class="tb-count">${i + 1} of ${TOUR.length}</span><span class="btns"><button class="btn" data-t="skip">Skip</button>${i ? '<button class="btn" data-t="back">Back</button>' : ''}<button class="btn primary" data-t="next">${i === TOUR.length - 1 ? 'Done' : 'Next'}</button></span></div>`;
+  requestAnimationFrame(placeBubble);
+}
+function startTour() {
+  if (!tourBubble) {
+    tourBubble = document.createElement('div'); tourBubble.className = 'tour-bubble'; tourBubble.setAttribute('role', 'dialog'); document.body.appendChild(tourBubble);
+    tourBubble.addEventListener('click', e => { const t = e.target.dataset.t; if (t === 'next') tourShow(tourI + 1); if (t === 'back') tourShow(tourI - 1); if (t === 'skip') endTour(); });
+    window.addEventListener('scroll', placeBubble, { passive: true }); window.addEventListener('resize', placeBubble);
+  }
+  tourBubble.hidden = false; tourShow(0);
+}
+function endTour() { if (tourEl) tourEl.classList.remove('tour-hl'); tourEl = null; tourI = -1; if (tourBubble) tourBubble.hidden = true; window.scrollTo({ top: 0, behavior: 'auto' }); }
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && tourI >= 0) endTour(); });
+
+// ---------- challenges ----------
+const gapsToStructures = () => {
+  let best = Infinity;
+  for (const s of S.structures) {
+    if (s.type === 'breakwater') { for (let i = cellOf(s.x1); i <= cellOf(s.x2); i++) best = Math.min(best, s.y - y[i]); }
+    if (s.type === 'island') { for (let i = cellOf(s.x - s.rx); i <= cellOf(s.x + s.rx); i++) best = Math.min(best, islandFront(s, (i + 0.5) * DX) - y[i]); }
+  }
+  return best;
+};
+const housesStanding = () => S.houses.filter(h => houseVisible(h)), housesLost = () => housesStanding().filter(h => h.gone).length;
+const CHALLENGES = [
+  { id: 'tombolo', emoji: '🏝️', title: 'Grow a tombolo', goal: 'Get the beach to grow out and join a breakwater or island within 15 years.', place: 'generic', years: 15, speed: 0.5,
+    setup() { setMode('custom'); S.H0 = 1.2; S.T = 9; S.th = 0; },
+    hint: 'Waves are coming straight in. Try a long breakwater (or a big island) fairly close to the beach.',
+    check() {
+      const gap = gapsToStructures();
+      if (!isFinite(gap)) return { p: 0, text: 'Build a breakwater or island first' };
+      return { p: clamp(1 - (gap - 12) / 140, 0, 1), text: gap < 12 ? 'Joined!' : `Closest gap: ${gap.toFixed(0)} m`, win: gap < 12 };
+    } },
+  { id: 'houses', emoji: '🏠', title: 'Save Camp Ellis', goal: 'Keep every house standing for 25 years while the sea rises fast and nor\'easters hit at high tide.', place: 'campEllis', years: 25, speed: 1,
+    setup() { S.slr = 12; S.timing = 'high'; setSeg('timingSeg', 'timing', 'high'); slr.value = S.slr; }, storms: [2, 5, 8, 11, 14, 17, 20, 23],
+    hint: 'Watch the houses beside the jetty. Sand fills, dune grass, a seawall or a groin can all buy time.',
+    check(end) {
+      const lost = housesLost(), risk = housesStanding().filter(h => houseStatus(h) === 'risk').length;
+      if (lost) return { p: 0, text: 'A house washed away', lose: `A house washed away in year ${Math.floor(S.t)}.` };
+      return { p: (S.t - CHL.t0) / this.years, text: risk ? `${risk} house${risk > 1 ? 's' : ''} at risk` : 'All houses safe', win: end };
+    } },
+  { id: 'plovers', emoji: '🐣', title: 'Plover paradise', goal: 'Help piping plovers fledge 160 chicks at Old Orchard Beach within 12 years.', place: 'oob', years: 12, speed: 0.6,
+    setup() {}, target: 160,
+    hint: 'Plovers need wide, open sand in front of the dunes. Use 🪹 Nesting area to rope off more spots where the beach is wide, and keep erosion away from them.',
+    check(end) { const c = Math.floor(S.fledged); return { p: clamp(c / this.target, 0, 1), text: `${c} of ${this.target} chicks`, win: c >= this.target, lose: end && c < this.target ? `Only ${c} chicks fledged in ${this.years} years.` : null }; } },
+  { id: 'storms', emoji: '⛈️', title: 'Weather the storms', goal: 'This beach has already lost most of its sand. Get through 6 big nor\'easters at high tide without a single flooded or lost house.', place: 'generic', years: 12, speed: 0.6,
+    setup() {
+      S.slr = 10; S.timing = 'high'; S.tideAmp = 1.8; setSeg('timingSeg', 'timing', 'high'); slr.value = S.slr; $('tide').value = S.tideAmp;
+      for (let i = 0; i < N; i++) { S.yls[i] -= 95; S.y2[i] -= 95; S.y0[i] -= 95; } totals();          // a narrow, eroded beach
+    }, storms: [1, 3, 5, 7, 9, 11],
+    hint: 'Once a dune is gone, waves pour over onto the road. Widen the beach with sand, plant dune grass, or armour it before the storms arrive.',
+    check(end) {
+      if (S.floods || housesLost()) return { p: 0, text: 'Flooded!', lose: S.floods ? 'Waves washed over the dune and flooded a house.' : 'A house washed away.' };
+      const done = (this.storms || []).filter(t => S.t - CHL.t0 > t + 0.02).length;
+      return { p: (S.t - CHL.t0) / this.years, text: `${done} of 6 storms survived`, win: end };
+    } }
+];
+const CHL = { active: null, t0: 0, fired: new Set(), starting: false, wins: new Set() };
+try { JSON.parse(localStorage.getItem('shoreline-challenges') || '[]').forEach(id => CHL.wins.add(id)); } catch (e) {}
+function renderChallenges() {
+  $('chalList').innerHTML = CHALLENGES.map(c => `<button class="chal" type="button" data-ch="${c.id}"><span class="ce" aria-hidden="true">${c.emoji}</span><b>${c.title}</b><span class="cs">${CHL.wins.has(c.id) ? '✅ done' : ''}</span><span class="cg">${c.goal}</span></button>`).join('');
+}
+$('chalList').addEventListener('click', e => { const b = e.target.closest('[data-ch]'); if (b) startChallenge(b.dataset.ch); });
+function startChallenge(id) {
+  const def = CHALLENGES.find(c => c.id === id); if (!def) return;
+  endChallenge(null); hideModal(); if (WEL.on) closeWelcome();
+  CHL.starting = true; loadPlace(def.place); CHL.starting = false;
+  def.setup(); syncSliders();
+  CHL.active = def; CHL.t0 = S.t; CHL.fired = new Set();
+  setSpeed(def.speed); placed();
+  $('placeBlurb').innerHTML = `<b>🏆 ${def.title}.</b> ${def.goal} <span class="fine">💡 ${def.hint}</span>`;
+  $('chalBanner').hidden = false; challengeBanner(def.check(false));
+  try { stage.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) {}
+  toast(`🏆 ${def.title}: ${def.goal} Build what you like, then press ▶ Start.`);
+  setTimeout(() => toast('💡 ' + def.hint), 3800);
+  setPlaying(false); refreshTerms(true);
+}
+function challengeBanner(st) {
+  const def = CHL.active; if (!def) return;
+  const yr = Math.min(def.years, Math.floor(S.t - CHL.t0) + 1);
+  const bn = $('chalBanner');
+  if (!bn.querySelector('.cst')) {                     // build once, then only update the text (so "Give up" stays clickable)
+    bn.innerHTML = '<div class="ct"></div><div class="bar"><i></i></div><div class="row2"><span class="cst"></span><button type="button" id="chalQuit">Give up</button></div>';
+    $('chalQuit').onclick = () => endChallenge(null);
+  }
+  const ct = `${def.emoji} ${def.title}`, cs = `Year ${yr} of ${def.years} · ${st.text}`, w = `${Math.round((st.p || 0) * 100)}%`;
+  if (bn.querySelector('.ct').textContent !== ct) bn.querySelector('.ct').textContent = ct;
+  if (bn.querySelector('.cst').textContent !== cs) bn.querySelector('.cst').textContent = cs;
+  bn.querySelector('.bar i').style.width = w;
+}
+function challengeTick() {
+  const def = CHL.active, el = S.t - CHL.t0;
+  for (const t of def.storms || []) if (el >= t && !CHL.fired.has(t) && !S.storm) { CHL.fired.add(t); startStorm('noreaster'); }
+  const end = el >= def.years, st = def.check(end);
+  if (st.win) return endChallenge(true, st);
+  if (st.lose) return endChallenge(false, st);
+  if (end) return endChallenge(false, { lose: 'Time ran out.' });
+  challengeBanner(st);
+}
+function endChallenge(won, st) {
+  const def = CHL.active; if (!def) return;
+  CHL.active = null; $('chalBanner').hidden = true;
+  if (won === null) return;
+  setPlaying(false);
+  if (won) {
+    CHL.wins.add(def.id); try { localStorage.setItem('shoreline-challenges', JSON.stringify([...CHL.wins])); } catch (e) {}
+    renderChallenges(); confetti();
+    showModal(`<h3>🎉 You did it!</h3><p><b>${def.emoji} ${def.title}</b> complete${st && st.text ? ': ' + st.text.toLowerCase() : ''}, in year ${clamp(Math.ceil(S.t - CHL.t0 - 1e-6), 1, def.years)}.</p><div class="btns"><button class="btn primary" data-m="more">Try another challenge</button><button class="btn" data-m="close">Keep playing</button></div>`);
+  } else {
+    showModal(`<h3>😬 Not this time</h3><p>${(st && st.lose) || ''}</p><p>💡 ${def.hint}</p><div class="btns"><button class="btn primary" data-m="again" data-id="${def.id}">Try again</button><button class="btn" data-m="close">Close</button></div>`);
+  }
+}
+function showModal(html) { const m = $('chalModal'); m.innerHTML = `<div class="card">${html}</div>`; m.hidden = false; }
+function hideModal() { $('chalModal').hidden = true; }
+$('chalModal').addEventListener('click', e => {
+  const b = e.target.closest('[data-m]'); if (!b) { if (e.target === $('chalModal')) hideModal(); return; }
+  hideModal();
+  if (b.dataset.m === 'again') startChallenge(b.dataset.id);
+  if (b.dataset.m === 'more') $('challengeBox').scrollIntoView({ behavior: 'smooth', block: 'center' });
+});
+function confetti() {
+  const em = ['🎉', '🐚', '🌊', '⭐', '🏖️', '🐣'], w = stage.clientWidth, h = stage.clientHeight;
+  for (let i = 0; i < 36; i++) {
+    const c = document.createElement('span'); c.className = 'confetti'; c.textContent = em[i % em.length];
+    c.style.left = Math.random() * w + 'px'; c.style.setProperty('--fall', (h * (0.7 + Math.random() * 0.4)) + 'px'); c.style.setProperty('--spin', (Math.random() * 720 - 360) + 'deg');
+    c.style.animationDelay = (Math.random() * 0.6) + 's'; stage.appendChild(c); setTimeout(() => c.remove(), 3400);
+  }
+}
+renderChallenges();
 
 // ---------- light / dark ----------
 function applyTheme(t, save) {
@@ -1820,11 +2195,17 @@ $('themeSeg').addEventListener('click', e => { const b = e.target.closest('butto
 h0.value = 1; per.value = 8.5; syncSliders();
 S.nests = PLACES.generic.nests.map(([x, pairs]) => ({ x, pairs, washed: false }));
 setTool('inspect'); setMode('cycle'); setSpeed(SP_MIN); setPlaying(false);
+(function () {
+  let m = null, w = null; try { m = localStorage.getItem('shoreline-ui'); w = localStorage.getItem('shoreline-welcome'); } catch (e) {}
+  setUI(m === 'explorer' ? 'explorer' : 'simple', false);
+  if (w !== 'done') { WEL.on = true; $('welcome').hidden = false; stepsRender(); }
+})();
 chips.querySelector('[data-place="generic"]').setAttribute('aria-pressed', 'true'); $('placeBlurb').innerHTML = '<b>Generic beach.</b> ' + PLACES.generic.blurb + ' Pick a Maine beach to load its structures and wave settings.';
 resize(); window.addEventListener('resize', () => { resize(); });
 if (window.ResizeObserver) { let lastH = ''; const ro = new ResizeObserver(() => { const k = ['.toprow', '.chartbox', 'header.top'].map(q => document.querySelector(q)?.offsetHeight).join(); if (k !== lastH) { lastH = k; resize(); } }); ['.toprow', '.chartbox', 'header.top'].forEach(q => { const e = document.querySelector(q); if (e) ro.observe(e); }); }
 resetBeach();
 refreshTerms(); updateReadouts(); drawChart();
 if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) { /* waves still animate slowly; user can pause */ }
+HIST.ready = true;
 requestAnimationFrame(frame);
 })();
